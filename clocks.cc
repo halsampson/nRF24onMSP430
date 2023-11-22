@@ -38,7 +38,7 @@ void stableDCO() {
 }
 
 long setCPUClockREFO(long CPUHz) {
-	for (int level = 1; level <= 3; level++) // maximuze Vcore for fast MCLK
+	for (int level = 1; level <= 3; level++) // maximize Vcore for fast MCLK
 		SetVCoreUp(level);
 
 	int FLLn;

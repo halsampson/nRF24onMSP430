@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include <nRF24lite.h>
-#include <SPIlite.h>
 #include <clocks.h>
 
 
@@ -50,7 +49,6 @@ __interrupt void Port_2(void) {
   P2IFG = 0;
   __bic_SR_register_on_exit (LPM0_bits);
 }
-
 
 
 // TODO: fix retries vs. Ard? timing? noise? ???

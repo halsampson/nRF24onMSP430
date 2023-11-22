@@ -12,7 +12,6 @@ typedef struct {
 	volatile byte IN, in, Out, out, DIR, dir, REN, ren, DS, ds, SEL, sel, SEL2, sel2;
 } PortB;
 
-
 #pragma pack(1)
 
 typedef struct {
@@ -51,9 +50,10 @@ typedef struct {
 } __attribute__((__packed__)) UCAx;
 
 
-// port/pin configuration
-#define nRF24SPI ((UCAx*)&UCA2CTLW0_L)
-#define nRF24port ((PortB*)&P9IN)
+// port/pin configurations - modify _BASE and pin numbers as needed
+#define nRF24SPI ((UCAx*)USCI_A2_BASE)
+
+#define nRF24port ((PortB*)P9_BASE)
 
 #define SCLK    BIT0  // UCA2CLK
 #define CSN     BIT1  // SPI
