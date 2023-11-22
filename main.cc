@@ -75,7 +75,7 @@ int main(void) {
 
   byte i = 0;
   while (1){
-    if (!(i % 16)) write("\n");
+    if (!(i % 8)) write("\n");
     write(hexStr(++i));
     byte retries = read_register(OBSERVE_TX) & 0xF;
     if (retries) {
@@ -84,7 +84,7 @@ int main(void) {
     	write(retryStr);
     }
 
-    delay(10);
+    delay(50);
   }
 
 	return 0;

@@ -10,7 +10,6 @@ void write_register(byte reg, byte b) {
 	nRF24port->Out |= CSN;
 }
 
-
 void write_register(byte reg, const byte* b, byte len) {
 	status = xferSPI(W_REGISTER | reg);
 	while (len--)
@@ -29,7 +28,7 @@ byte read_register(byte reg) {
 }
 
 void read_register(byte reg, byte* buf, byte len) {
-	status = status = xferSPI(R_REGISTER | reg);
+	status = xferSPI(R_REGISTER | reg);
 	while (len--)
 		*buf++ = xferSPI(RF24_NOP);
 	nRF24port->Out |= CSN;
@@ -50,6 +49,8 @@ void flush_tx(void) {
 }
 
 
+const byte PayloadSize = 8; // or can be dynamic
+
 void initRF24() {
 	nRF24port->Out &= ~CE;
 	nRF24port->Out |= CSN;
@@ -58,12 +59,12 @@ void initRF24() {
   write_register(EN_AA, 0x3F);       // enable auto-ack on all pipes
   write_register(EN_RXADDR, 3);      // only open RX pipes 0 & 1
   write_register(SETUP_AW, 5 - 2);   // set address length to 5 bytes
-  write_register(SETUP_RETR, 5 << 4 | 15); // 250us * n +1) interval between 15 retransmits
+  write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
 	write_register(RF_SETUP, 1 << RF_DR_LOW | 3 << 1 | 1); // 250 kbps | max power | lnaEnable
 
 	for (byte pipe = 0; pipe <= 5; ++pipe) {
-    write_register(RX_PW_P0 + pipe, 32);  // set static payload size to 32 (max) bytes
+    write_register(RX_PW_P0 + pipe, PayloadSize);  // set static payload size to (max) bytes
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
 	}
 
@@ -73,7 +74,7 @@ void initRF24() {
 	flush_rx();
 	flush_tx();
 
-	write_register(NRF_CONFIG, 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode; (IRQ masks)
+	write_register(NRF_CONFIG, 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
 }
 
 
@@ -109,29 +110,29 @@ void openWritingPipe(const byte* address) {  // LSB first
 }
 
 
-bool write(const byte* buf, int8 len /* = -1*/) {
+bool write(const byte* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
 
-	byte packetLen = 32;
-	while (packetLen-- && len-- && (len >= 0 || *buf))
+	byte payloadLen = PayloadSize; // better variable
+	while (payloadLen-- && len-- && (len >= 0 || *buf))
 	  xferSPI(*buf++);
 
-	while (packetLen--)  // pad to full packetLen
+	while (payloadLen--)  // pad to PayloadLen
 		xferSPI(0);
 
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
 
 	bool OK;
-	byte timeout = 60; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = 1.344ms * (tx + ack) * 15 retries
+	byte timeout = 120; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = (1.344ms * (tx + ack ) + retry (4ms)) * 15 retries
   while (1) {
   	if (get_status() & (1 << TX_DS)) { // DataSent
   		OK = true;
   		break;
   	}
 
-    if (status & (1 << MAX_RT) || !--timeout) { // Max retries exceeded
+    if (status & (1 << MAX_RT) || !--timeout) { // Max retries exceeded or timeout
       OK = false;
-      flush_tx(); // Only 1 packet in FIFO at a time using this method?, so just flush
+      flush_tx(); // only 1 packet in FIFO, so just flush
       break;
     }
     delay(1);  // or less
