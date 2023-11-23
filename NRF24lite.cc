@@ -3,34 +3,35 @@
 
 byte status;
 
-void write_register(byte reg, byte b) {
-	status = xferSPI(W_REGISTER | reg);
-	xferSPI(b);
-
-	nRF24port->Out |= CSN;
-}
-
-void write_register(byte reg, const byte* b, byte len) {
-	status = xferSPI(W_REGISTER | reg);
-	while (len--)
-	  xferSPI(*b++);
-
-	nRF24port->Out |= CSN;
-}
-
-
 byte read_register(byte reg) {
 	status = xferSPI(R_REGISTER | reg);
 	byte got = xferSPI(0xff);
-
 	nRF24port->Out |= CSN;
 	return got;
 }
 
-void read_register(byte reg, byte* buf, byte len) {
+void read_register(byte reg, void* buf, byte len) {
 	status = xferSPI(R_REGISTER | reg);
-	while (len--)
-		*buf++ = xferSPI(RF24_NOP);
+	while (len--) {
+		*(byte*)buf = xferSPI(RF24_NOP);
+		buf = (void*)((byte*)buf + 1);
+	}
+	nRF24port->Out |= CSN;
+}
+
+
+void write_register(byte reg, byte b) {
+	status = xferSPI(W_REGISTER | reg);
+	xferSPI(b);
+	nRF24port->Out |= CSN;
+}
+
+void write_register(byte reg, const void* b, byte len) {
+	status = xferSPI(W_REGISTER | reg);
+	while (len--) {
+	  xferSPI(*(byte*)b);
+	  b = (void*)((byte*)b + 1);
+	}
 	nRF24port->Out |= CSN;
 }
 
@@ -41,19 +42,22 @@ byte get_status() {
 }
 
 void flush_rx(void) {
-    write_register(FLUSH_RX, RF24_NOP);
+  write_register(FLUSH_RX, RF24_NOP);
 }
 
 void flush_tx(void) {
-    write_register(FLUSH_TX, RF24_NOP);
-    delay(1); // ??
+  write_register(FLUSH_TX, RF24_NOP);
 }
 
 const byte PacketOvhd = 1 + 1;  // preamble, control
 const byte AddressWidth = 5;  // pipe 0 and 1
 const byte CRCWidth = 2;
-
 byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
+
+
+const byte dataRate = 2;  // 0 = 1Mbps; 1 = 2Mbps; 2 = 250kbps
+const byte rfPower  = 3;  // dBm / 6 - 18
+
 
 void initRF24() {
   initSPI();
@@ -67,7 +71,7 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
-	write_register(RF_SETUP, 1 << RF_DR_LOW | 3 << 1 | 1); // 250 kbps | max power | lnaEnable
+	write_register(RF_SETUP, dataRate << 3 | rfPower << 1 ); // 250 kbps | max power | lnaEnable?
 
 	for (int8 pipe = 5; pipe >= 0; --pipe) {
     write_register(RX_PW_P0 + pipe, PayloadSize);  // set static payload size
@@ -84,7 +88,7 @@ void initRF24() {
 }
 
 
-void openReadingPipe(byte pipe, const byte* address) {  // LSB first
+void openReadingPipe(byte pipe, const void* address) {  // LSB first
   write_register(RX_ADDR_P0 + pipe, address, pipe <= 1 ? 5 : 1);
   write_register(EN_RXADDR, read_register(EN_RXADDR) | 1 << pipe);
 }
@@ -110,13 +114,13 @@ void stopListening(void){
 }
 
 
-void openWritingPipe(const byte* address) {  // LSB first
+void openWritingPipe(const void* address) {  // LSB first
   write_register(TX_ADDR, address, AddressWidth);
   write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
 }
 
 
-bool write(const byte* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
+bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	write_register(NRF_CONFIG, 1 << MASK_RX_DR | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
   // IRQ pin low on DataSent or MAX_RT
@@ -124,10 +128,13 @@ bool write(const byte* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
 
 	int8 payloadLen = PayloadSize; // better variable
-	while (payloadLen-- > 0 && len-- > 0 && (len >= 0 || *buf))
-	  xferSPI(*buf++);
+	while (len-- && (len >= 0 || *(byte*)buf)) {  // negative len means null terminated string
+	  xferSPI(*(byte*)buf);
+	  buf = (void*)((byte*)buf + 1);
+	  if (--payloadLen <= 0) break;
+  }
 
-	while (payloadLen-- > 0)  // pad to PayloadLen
+	while (payloadLen-- > 0)  // pad to PayloadSize
 		xferSPI(0);
 
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
@@ -141,8 +148,10 @@ bool write(const byte* buf, int8 len /* = -1*/) {  // defaults to null-terminate
   } while ((nRF24port->IN & IRQ) && --timeout);  // IRQ active LO
 
   bool OK = get_status() & (1 << TX_DS); // DataSent
-  if (!OK) // Max retries exceeded or timeout
+  if (!OK) {// Max retries exceeded or timeout
     flush_tx(); // only 1 packet in FIFO, so just flush
+    flush_rx();
+  }
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	return OK;

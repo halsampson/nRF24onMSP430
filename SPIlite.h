@@ -9,7 +9,7 @@ typedef unsigned char byte;
 typedef signed char int8;
 
 typedef struct {
-	volatile byte IN, in, Out, out, DIR, dir, REN, ren, DS, ds, SEL, sel, SEL2, sel2;
+	volatile byte IN, IN_H, Out, Out_H, DIR, DIR_H, REN, REN_H, DS, DS_H, SEL, SEL_H, SEL2, SEL2_H;
 } PortB;
 
 #pragma pack(1)
