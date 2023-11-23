@@ -83,7 +83,7 @@ void delay_us(int us) {
 	while ((int)TA0R < 0);
 }
 
-void delay(int ms) {
+void delay(int ms) {  // TODO: better sleep with timer wake
 	while (ms--)
 		__delay_cycles(NomCPUHz / 1000 - 6);
 }

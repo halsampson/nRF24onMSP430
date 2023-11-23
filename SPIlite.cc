@@ -2,7 +2,7 @@
 
 void initSPI() {
 	nRF24port->DIR = SCLK | SDO | CSN | CE;
-	nRF24port->DS = SCLK | SDO | CSN | CE;
+	nRF24port->DS  = SCLK | SDO | CSN | CE;
 	nRF24port->Out = SDI | CSN | IRQ;
 	nRF24port->REN = SDI | IRQ; // too slow -- check on board pullup or tri-state?
 

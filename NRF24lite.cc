@@ -46,25 +46,31 @@ void flush_rx(void) {
 
 void flush_tx(void) {
     write_register(FLUSH_TX, RF24_NOP);
+    delay(1); // ??
 }
 
+const byte PacketOvhd = 1 + 1;  // preamble, control
+const byte AddressWidth = 5;  // pipe 0 and 1
+const byte CRCWidth = 2;
 
-const byte PayloadSize = 8; // or can be dynamic
+byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
 
 void initRF24() {
+  initSPI();
+
 	nRF24port->Out &= ~CE;
 	nRF24port->Out |= CSN;
 	delay(5);
 
   write_register(EN_AA, 0x3F);       // enable auto-ack on all pipes
   write_register(EN_RXADDR, 3);      // only open RX pipes 0 & 1
-  write_register(SETUP_AW, 5 - 2);   // set address length to 5 bytes
+  write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
 	write_register(RF_SETUP, 1 << RF_DR_LOW | 3 << 1 | 1); // 250 kbps | max power | lnaEnable
 
-	for (byte pipe = 0; pipe <= 5; ++pipe) {
-    write_register(RX_PW_P0 + pipe, PayloadSize);  // set static payload size to (max) bytes
+	for (int8 pipe = 5; pipe >= 0; --pipe) {
+    write_register(RX_PW_P0 + pipe, PayloadSize);  // set static payload size
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
 	}
 
@@ -105,40 +111,39 @@ void stopListening(void){
 
 
 void openWritingPipe(const byte* address) {  // LSB first
-  write_register(RX_ADDR_P0, address, 5);  // for ACKs
-  write_register(TX_ADDR, address, 5);
+  write_register(TX_ADDR, address, AddressWidth);
+  write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
 }
 
 
 bool write(const byte* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
+	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
+	write_register(NRF_CONFIG, 1 << MASK_RX_DR | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
+  // IRQ pin low on DataSent or MAX_RT
+
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
 
-	byte payloadLen = PayloadSize; // better variable
-	while (payloadLen-- && len-- && (len >= 0 || *buf))
+	int8 payloadLen = PayloadSize; // better variable
+	while (payloadLen-- > 0 && len-- > 0 && (len >= 0 || *buf))
 	  xferSPI(*buf++);
 
-	while (payloadLen--)  // pad to PayloadLen
+	while (payloadLen-- > 0)  // pad to PayloadLen
 		xferSPI(0);
 
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
 
-	bool OK;
+	// TODO: better sleep and wait for IRQ or timeout timer wake ******
+
 	byte timeout = 120; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = (1.344ms * (tx + ack ) + retry (4ms)) * 15 retries
-  while (1) {
-  	if (get_status() & (1 << TX_DS)) { // DataSent
-  		OK = true;
-  		break;
-  	}
+  do {
+    delay(1); // PLL settle + packetSize * 8 * 4us * (transmit + ack)
+  	nRF24port->Out &= ~CE;
+  } while ((nRF24port->IN & IRQ) && --timeout);  // IRQ active LO
 
-    if (status & (1 << MAX_RT) || !--timeout) { // Max retries exceeded or timeout
-      OK = false;
-      flush_tx(); // only 1 packet in FIFO, so just flush
-      break;
-    }
-    delay(1);  // or less
-  }
+  bool OK = get_status() & (1 << TX_DS); // DataSent
+  if (!OK) // Max retries exceeded or timeout
+    flush_tx(); // only 1 packet in FIFO, so just flush
 
-	nRF24port->Out &= ~CE;
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	return OK;
 }

@@ -52,7 +52,7 @@ __interrupt void Port_2(void) {
 
 
 // TODO: fix retries vs. Ard? timing? noise? ???
-// TODO: optimize packet length
+// TODO: dynamic packet length: enable on rcvr also ***
 // TODO: PA/LNA version support
 
 // TODO: serial connection for debugging *****
@@ -61,28 +61,23 @@ const byte RFaddr[] = "CarBV";
 
 int main(void) {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
-
 	initPorts();
 
 	setCPUClockREFO(NomCPUHz);
-
 	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
-
-  initSPI();
 
   initRF24();
   openWritingPipe(RFaddr);
 
-  byte i = 0;
+  byte count = 0;
   while (1){
-    if (!(i % 8)) write("\n");
-    write(hexStr(++i));
+    const byte MaxRetries = 15;
     byte retries = read_register(OBSERVE_TX) & 0xF;
-    if (retries) {
-    	byte retryStr[] = "r  ";
-    	retryStr[1] = retries <= 9 ? retries + '0' : retries + 'A' - 10;
-    	write(retryStr);
-    }
+    byte data[] = "********************";
+    data[count++ % (1 + MaxRetries)] = '.';
+    data[1 + MaxRetries - retries] = '\n';
+    data[1 + MaxRetries - retries + 1] = 0;
+    write(data);
 
     delay(50);
   }
