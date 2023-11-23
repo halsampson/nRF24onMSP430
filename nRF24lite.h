@@ -4,7 +4,7 @@
 #include <nRF24L01.h>
 #include <SPIlite.h>
 
-const byte PayloadSize = 18; // or can be dynamic
+const byte PayloadSize = 32; // max if dynamic
 extern byte status;
 
 void write_register(byte reg, byte b);

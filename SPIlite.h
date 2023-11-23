@@ -4,10 +4,6 @@
 #include <msp430.h>
 #include <clocks.h>
 
-typedef unsigned int word;
-typedef unsigned char byte;
-typedef signed char int8;
-
 typedef struct {
 	volatile byte IN, IN_H, Out, Out_H, DIR, DIR_H, REN, REN_H, DS, DS_H, SEL, SEL_H, SEL2, SEL2_H;
 } PortB;

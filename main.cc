@@ -51,11 +51,21 @@ __interrupt void Port_2(void) {
 }
 
 
-// TODO: fix retries vs. Ard? timing? noise? ???
-// TODO: dynamic packet length: enable on rcvr also ***
 // TODO: PA/LNA version support
 
 // TODO: serial connection for debugging *****
+
+#if 0
+byte regs[FEATURE + 1];
+byte txaddr[5], rxaddr[5];
+
+void dump_registers() {
+	for (byte reg = 0; reg <= FEATURE ; ++reg)
+		regs[reg] = read_register(reg);
+	read_register(TX_ADDR, txaddr, sizeof txaddr);
+	read_register(RX_ADDR_P0, rxaddr, sizeof rxaddr);
+}
+#endif
 
 const byte RFaddr[] = "CarBV";
 
@@ -69,15 +79,18 @@ int main(void) {
   initRF24();
   openWritingPipe(RFaddr);
 
-  byte count = 0;
+  // dump_registers();
+
+  byte count = 8;
   while (1){
     const byte MaxRetries = 15;
     byte retries = read_register(OBSERVE_TX) & 0xF;
-    byte data[] = "********************";
-    data[count++ % (1 + MaxRetries)] = '.';
+
+    char data[ 1 + MaxRetries + 2] = ".................";
+    data[count++ % (1 + MaxRetries)] = '\\';
     data[1 + MaxRetries - retries] = '\n';
     data[1 + MaxRetries - retries + 1] = 0;
-    write(data);
+    write(data, 1 + MaxRetries - retries + 2);
 
     delay(50);
   }

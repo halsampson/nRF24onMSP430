@@ -4,7 +4,7 @@
 
 // 24 MHz / 32 * N / 32 FLL steps   DCO max 135 MHz -> FLL Div ~180 max
 
-#define REFO_Hz  32768
+#define REFO_Hz  32768L
 
 void SetVCoreUp (unsigned int level) { // Note: Change core voltage one level at a time.
 	PMMCTL0_H = 0xA5; // Open PMM registers for write access
@@ -36,6 +36,8 @@ void stableDCO() {
   		if (!stable--) return;
   }
 }
+
+long actualCPUHz;
 
 long setCPUClockREFO(long CPUHz) {
 	for (int level = 1; level <= 3; level++) // maximize Vcore for fast MCLK
@@ -74,17 +76,22 @@ long setCPUClockREFO(long CPUHz) {
 	UCSCTL7 &= ~DCOFFG;
 	SFRIFG1 &= ~OFIFG;
 
-	return (FLLn + 1) * REFO_Hz << FLLPow;
+	return actualCPUHz = (FLLn + 1) * REFO_Hz << FLLPow;
 }
 
 
-void delay_us(int us) {
-	TA0R = -us * (NomCPUHz / 1000000) + 6; // TODO: inaccurate, beware CPUHz > 32.7 MHz !!
-	while ((int)TA0R < 0);
+void delay_us(word us) {
+	// static byte us_cycles = actualCPUHz / 1000000 - 6;
+	const byte us_cycles = NomCPUHz / 1000000 - 6; // TODO: adjust loop overhead, beware CPUHz < 6 MHz ****
+	while (us--)
+		__delay_cycles(us_cycles);
 }
 
-void delay(int ms) {  // TODO: better sleep with timer wake
+
+void delay(word ms) {  // TODO: better sleep with timer wake
+	// static word ms_cycles = actualCPUHz / 1000 - 6;  // adjust for while loop
+	const word ms_cycles = NomCPUHz / 1000 - 6;
 	while (ms--)
-		__delay_cycles(NomCPUHz / 1000 - 6);
+		__delay_cycles(ms_cycles);
 }
 
