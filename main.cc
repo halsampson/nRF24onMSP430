@@ -50,10 +50,15 @@ __interrupt void Port_2(void) {
   __bic_SR_register_on_exit (LPM0_bits);
 }
 
+// TODO: 3.3V better than 3.6V regulator
+//    best variable level
 
-// TODO: PA/LNA version support
+// TODO: button to cycle power levels for PA, ... test
 
-// TODO: serial connection for debugging *****
+// TODO: send ADC12 for car monitor; low power sleep mode / wake
+
+// TODO: scan for quiet channels - away from WiFi
+
 
 #if 0
 byte regs[FEATURE + 1];
@@ -67,6 +72,10 @@ void dump_registers() {
 }
 #endif
 
+// Port P2
+#define LEDCath BIT0   // JP2-1
+#define LEDAnod BIT4   // JP2-2
+
 const byte RFaddr[] = "CarBV";
 
 int main(void) {
@@ -75,6 +84,8 @@ int main(void) {
 
 	setCPUClockREFO(NomCPUHz);
 	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
+
+	P2DS = 0;
 
   initRF24();
   openWritingPipe(RFaddr);
@@ -85,6 +96,32 @@ int main(void) {
   while (1){
     const byte MaxRetries = 15;
     byte retries = read_register(OBSERVE_TX) & 0xF;
+
+    switch (retries) {
+  	case 0 :
+  		P2OUT = LEDCath;  // Green bright
+  	  P2DIR = LEDCath | LEDAnod;
+  	  break;
+
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+  	  P2OUT = 0; // off
+  	  break;
+
+    default:
+  	  P2OUT = P2REN = LEDAnod;  // Red Dim
+  	  P2DIR = LEDCath;
+  	  break;
+
+    case MaxRetries :
+  	  P2OUT = LEDAnod;  // Red bright
+  	  P2DIR = LEDAnod | LEDCath;
+  	  break;
+    }
+
 
     char data[ 1 + MaxRetries + 2] = ".................";
     data[count++ % (1 + MaxRetries)] = '\\';

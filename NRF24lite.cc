@@ -55,8 +55,8 @@ const byte CRCWidth = 2;
 byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
 
 
-const byte dataRate = 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
-const byte rfPower  = 3;  // dBm / 6 - 18
+const byte dataRate = 0 ? 0 : 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
+const byte rfPower  = 2;  // dBm / 6 - 18    ? lower for YJ-25008+PA? vs. overload, esp 3.6V
 
 
 void initRF24() {
@@ -70,13 +70,13 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
-	write_register(RF_SETUP, dataRate | rfPower << 1 | 1); // 250 kbps | max power | lnaEnable?
+	write_register(RF_SETUP, dataRate | rfPower << 1); // 250 kbps | max power | lnaEnable?
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
 
 	write_register(DYNPD, 0x3F);  // enable dynamic payload size on all pipes
-	write_register(FEATURE, 1 << EN_DPL | 1 << EN_ACK_PAY); // ??  match Ard!  TODO: check dump_registers
+	write_register(FEATURE, 1 << EN_DPL | 1 << EN_ACK_PAY);
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); //reset
 	flush_rx();
@@ -147,8 +147,9 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	byte timeout = 120; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = (1.344ms * (tx + ack ) + retry (4ms)) * 15 retries
   do {
     delay(1); // PLL settle + packetSize * 8 * 4us * (transmit + ack)
-  	nRF24port->Out &= ~CE;
+  	nRF24port->Out &= ~CE; // or later/earlier (10 us min pulse)
   } while ((nRF24port->IN & IRQ) && --timeout);  // IRQ active LO
+
 
   bool OK = get_status() & (1 << TX_DS); // DataSent
   if (!OK) {// Max retries exceeded or timeout
