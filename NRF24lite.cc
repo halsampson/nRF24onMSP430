@@ -56,8 +56,14 @@ byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
 
 
 const byte dataRate = 0 ? 0 : 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
-const byte rfPower  = 2;  // dBm / 6 - 18    ? lower for YJ-25008+PA? vs. overload, esp 3.6V
 
+void setPAlevel(byte level) { // 0..3: * 6 - 18 = dBm out  lower for YJ-25008+PA? vs. overload, esp 3.6V
+	write_register(RF_SETUP, dataRate | (level & 3) << 1);
+}
+
+byte getPAlevel() {
+	return (read_register(RF_SETUP) >> 1) & 3;
+}
 
 void initRF24() {
   initSPI();
@@ -70,7 +76,7 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
-	write_register(RF_SETUP, dataRate | rfPower << 1); // 250 kbps | max power | lnaEnable?
+  setPAlevel(3);
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses

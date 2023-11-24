@@ -8,18 +8,16 @@
 
 
 typedef struct {
-	volatile unsigned int IN, Out, DIR, REN, DS, SEL[2];
-
-// port 1/2 only
-	volatile unsigned int IV[5];
-	volatile unsigned int IES, IE, IFG;
+	volatile word IN, Out, DIR, REN, DS, SEL[2];
+	volatile word IV1; // port 1/2 only
+	word resv[4];
+	volatile word IES, IE, IFG, IV2;
 } PortW;
 
-
-void initPorts() {
+void initPorts() { // all inputs with pullups
 	for (PortW* p = (PortW*)&PAIN; p <= (PortW*)&PFIN; ++p) {
-		p->DIR = p->Out = 0;
-		p->REN = 0xFFFF;
+		p->DIR = 0;
+		p->REN = p->Out = 0xFFFF;
 	}
 }
 
@@ -61,6 +59,9 @@ __interrupt void Port_2(void) {
 
 
 #if 0
+
+#define DUMP_REGISTERS
+
 byte regs[FEATURE + 1];
 byte txaddr[5], rxaddr[5];
 
@@ -73,8 +74,52 @@ void dump_registers() {
 #endif
 
 // Port P2
-#define LEDCath BIT0   // JP2-1
-#define LEDAnod BIT4   // JP2-2
+#define LEDCath BIT2  // JP2-5  TA1.1
+#define LEDAnod BIT3  // JP2-7  TA1.2
+
+
+void setLEDlevel(byte level) {
+	// Red 1.65V 1mA   Grn 1.9V 1mA
+	// REN: 35K -- 60uA very dim
+	// DS: ~3:1	 20Ω/60Ω
+	// Color Grn Mixed Red
+
+	P2DS = 0;
+	P2DIR = P2SEL = LEDCath | LEDAnod;
+
+	TA1CTL = TASSEL_2 | MC_2; // SMCLK Continuous
+	TA1CCTL1 = OUTMOD_3; // Cath / hi at CCR1
+	TA1CCTL2 = OUTMOD_7; // Anod \ lo at CCR2
+	TA1CCR0 = 0xFFFF;
+
+	// starts green
+	// toggle both for red
+
+	// logarithmic: 16 steps 0 .. 15:   shift by level
+	TA1CCR1 = (word)0xFFFD >> level;  // Green on time if CCR2 > CCR1
+	TA1CCR2 = -2 << level;  // Red time from CCR2 (> CCR1) to CCR0
+
+	// CCR1 <= CCR2 <= cCR0 = 0xFFFF
+	// Red time = Cath lo, Anod hi = CCR1
+	// Grn time = Anod lo, Cath hi = -CCR2
+}
+
+
+// Port P4
+#define S1 BIT1
+#define S2 BIT2
+
+void checkSwitches() {
+  if (!(P4IN & S1)) {
+    setPAlevel(getPAlevel() + 1);
+  	setLEDlevel(getPAlevel() << 2);   // red = higher
+  	delay(500);
+  	while (!(P4IN & S1)); // wait for switch open
+  }
+
+  if (!(P4IN & S2)) WDTCTL = 0; // restart
+}
+
 
 const byte RFaddr[] = "CarBV";
 
@@ -85,43 +130,23 @@ int main(void) {
 	setCPUClockREFO(NomCPUHz);
 	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
 
-	P2DS = 0;
+	for (byte level = 0; level < 16; ++level) {
+		setLEDlevel(level);
+		delay(100);
+	}
 
   initRF24();
   openWritingPipe(RFaddr);
 
-  // dump_registers();
+#ifdef DUMP_REGISTERS
+   dump_registers();
+#endif
 
   byte count = 8;
   while (1){
     const byte MaxRetries = 15;
     byte retries = read_register(OBSERVE_TX) & 0xF;
-
-    switch (retries) {
-  	case 0 :
-  		P2OUT = LEDCath;  // Green bright
-  	  P2DIR = LEDCath | LEDAnod;
-  	  break;
-
-    case 1:
-    case 2:
-    case 3:
-    case 4:
-    case 5:
-  	  P2OUT = 0; // off
-  	  break;
-
-    default:
-  	  P2OUT = P2REN = LEDAnod;  // Red Dim
-  	  P2DIR = LEDCath;
-  	  break;
-
-    case MaxRetries :
-  	  P2OUT = LEDAnod;  // Red bright
-  	  P2DIR = LEDAnod | LEDCath;
-  	  break;
-    }
-
+    setLEDlevel(retries);
 
     char data[ 1 + MaxRetries + 2] = ".................";
     data[count++ % (1 + MaxRetries)] = '\\';
@@ -129,6 +154,7 @@ int main(void) {
     data[1 + MaxRetries - retries + 1] = 0;
     write(data, 1 + MaxRetries - retries + 2);
 
+    checkSwitches();
     delay(50);
   }
 
