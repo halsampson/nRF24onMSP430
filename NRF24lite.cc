@@ -53,7 +53,7 @@ const byte PacketOvhd = 1 + 1;  // preamble, control
 const byte AddressWidth = 5;  // pipe 0 and 1
 const byte CRCWidth = 2;
 byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
-
+const bool staticPayloadSize = false;
 
 const byte dataRate = 0 ? 0 : 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
 
@@ -76,7 +76,7 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
   write_register(RF_CH, 1);
-  setPAlevel(3);
+  setPAlevel(2);  // for +PA -- increase using S1
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
@@ -130,6 +130,9 @@ void openWritingPipe(const void* address) {  // LSB first
 
 
 bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
+	const bool ShortCE = false;
+	const bool LongCE = true;  // for +PA PowerAmp enable -- provide 150 mA !!
+
   // payload width is set by # bytes clocked into TX FIFO
 
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
@@ -141,26 +144,35 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	  if (--payloadLen <= 0) break;
   }
 
-	if (0) while (payloadLen-- > 0)  // pad to PayloadSize for static
+	if (staticPayloadSize) while (payloadLen-- > 0)  // pad to PayloadSize if static
 		xferSPI(0);
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
 
-	// TODO: better sleep and wait for IRQ or timeout timer wake ******
+	if (ShortCE) {
+		delay_us(20);
+		nRF24port->Out &= ~CE;
+	}
 
+	// TODO: better sleep uP waiting for IRQ or timeout timer wake ******
 	byte timeout = 120; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = (1.344ms * (tx + ack ) + retry (4ms)) * 15 retries
   do {
     delay(1); // PLL settle + packetSize * 8 * 4us * (transmit + ack)
-  	nRF24port->Out &= ~CE; // or later/earlier (10 us min pulse)
+  	if (!LongCE) nRF24port->Out &= ~CE; // or later/earlier (10 us min pulse)
   } while ((nRF24port->IN & IRQ) && --timeout);  // IRQ active LO
 
+	nRF24port->Out &= ~CE;
 
   bool OK = get_status() & (1 << TX_DS); // DataSent
   if (!OK) {// Max retries exceeded or timeout
     flush_tx(); // only 1 packet in FIFO, so just flush
     flush_rx();
+    if (!timeout) {
+    	P2DIR = P2SEL = 0;  // LEDs off
+    	delay(250); // will flash green
+    }
   }
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
