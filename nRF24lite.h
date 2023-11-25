@@ -20,6 +20,10 @@ void flush_tx(void);
 
 void initRF24();
 
+extern byte usedChannels[128 / 8];
+byte scanChannels();
+void setChannel(byte channel);
+
 void setPAlevel(byte level); // 0..3: * 6 - 18 = dBm out  lower for YJ-25008+PA? vs. overload, esp 3.6V
 byte getPAlevel();
 

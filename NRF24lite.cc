@@ -65,6 +65,10 @@ byte getPAlevel() {
 	return (read_register(RF_SETUP) >> 1) & 3;
 }
 
+void setChannel(byte channel) {
+	write_register(RF_CH, channel & 0x7F);
+}
+
 void initRF24() {
   initSPI();
 
@@ -75,8 +79,9 @@ void initRF24() {
   write_register(EN_AA, 0x3F);       // enable auto-ack on all pipes
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
-  write_register(RF_CH, 1);
+
   setPAlevel(2);  // for +PA -- increase using S1
+  setChannel(1); // TODO: scan
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
@@ -118,6 +123,39 @@ void stopListening(void){
 }
 
 
+bool checkChannel(byte channel) {
+	setChannel(channel);
+	startListening();
+	delay_us(130 + 40); // wake + AGC settle
+
+	byte dwell = 0;
+	while (--dwell) {
+		if (read_register(RPD)) {
+			stopListening();
+			return true;
+		}
+	}
+	stopListening();
+	return false;
+}
+
+
+byte channelUse[128];
+
+byte scanChannels() { // call multiple times to accumulate channel usage spectrum
+	static byte maxUseCount = 0;
+	for (byte channel = 0; channel < 128; ++channel) {
+		if (checkChannel(channel)) {
+			// increment with probability 1/count -> accumulates roughly ln(count) = integral(1/count)
+			if (channelUse[channel] && (byte)TA0R % channelUse[channel]) continue;
+			if (++channelUse[channel] > maxUseCount)
+				++maxUseCount;
+		}
+	}
+	return maxUseCount;
+}
+
+
 void openWritingPipe(const void* address) {  // LSB first
   write_register(TX_ADDR, address, AddressWidth);
   write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
@@ -152,7 +190,7 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
 
 	if (ShortCE) {
-		delay_us(20);
+		delay_us(10);
 		nRF24port->Out &= ~CE;
 	}
 
