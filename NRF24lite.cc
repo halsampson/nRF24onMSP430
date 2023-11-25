@@ -80,8 +80,8 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
 
-  setPAlevel(2);  // for +PA -- increase using S1
-  setChannel(1); // TODO: scan
+  setPAlevel(3); // +PA needs decrease using S1
+  setChannel(122);
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses

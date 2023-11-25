@@ -110,7 +110,7 @@ void setLEDlevel(byte level) { // 0: bright green .. 15: bright red
 
 void checkSwitches() {
   if (!(P4IN & S1)) {
-    setPAlevel(getPAlevel() + 1);
+    setPAlevel(getPAlevel() - 1);
   	setLEDlevel(getPAlevel() << 2);   // red = higher
   	delay(500);
   	while (!(P4IN & S1)); // wait for switch open
@@ -136,9 +136,12 @@ int main(void) {
 
   initRF24();
 
+#if 0  // used spectrum scan
   while ((P4IN & S2) && scanChannels() < 255);
-
   while (1);
+#endif
+
+  setChannel(122);  // quietest
 
   openWritingPipe(RFaddr);
 
