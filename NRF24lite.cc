@@ -35,7 +35,6 @@ void write_register(byte reg, const void* b, byte len) {
 	nRF24port->Out |= CSN;
 }
 
-
 byte get_status() {
   write_register(RF24_NOP, RF24_NOP);
   return status;
@@ -81,7 +80,6 @@ void initRF24() {
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
 
   setPAlevel(3); // +PA needs decrease using S1
-  setChannel(122);
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses

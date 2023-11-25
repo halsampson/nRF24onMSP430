@@ -6,12 +6,13 @@
 #include <nRF24lite.h>
 #include <clocks.h>
 
+#include <private.txt> // RFch, RFaddr
+
 // TODO: send ADC12 for car monitor; low power sleep mode / wake
 //   also send retries to check
 
 // TODO: 3.3V better than 3.6V regulator
 //    best variable level
-
 
 
 typedef struct {
@@ -120,8 +121,6 @@ void checkSwitches() {
 }
 
 
-const byte RFaddr[] = "CarBV";
-
 int main(void) {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
@@ -141,7 +140,7 @@ int main(void) {
   while (1);
 #endif
 
-  setChannel(122);  // quietest
+  setChannel(RFch);  // quietest
 
   openWritingPipe(RFaddr);
 
