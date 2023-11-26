@@ -48,10 +48,12 @@ void flush_tx(void) {
   write_register(FLUSH_TX, RF24_NOP);
 }
 
-const byte PacketOvhd = 1 + 1;  // preamble, control
-const byte AddressWidth = 5;  // pipe 0 and 1
+// in bits
+const byte PacketOvhd = 8 + 9;    // preamble, control
+const byte AddressWidth = 5;  // pipe 0 and 1 max (others 1 byte)
 const byte CRCWidth = 2;
-byte packetSize = PacketOvhd + AddressWidth + PayloadSize + CRCWidth;
+
+word packetBits = PacketOvhd + AddressWidth * 8 + (word)PayloadSize * 8 + CRCWidth * 8;
 const bool staticPayloadSize = false;
 
 const byte dataRate = 0 ? 0 : 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
@@ -153,6 +155,12 @@ byte scanChannels() { // call multiple times to accumulate channel usage spectru
 	return maxUseCount;
 }
 
+#pragma vector=USCI_A3_VECTOR
+__interrupt void USCI_A3(void) {
+	nRF24IRQ->IFG = 0;
+  __bic_SR_register_on_exit(LPM3_bits);
+}
+
 
 void openWritingPipe(const void* address) {  // LSB first
   write_register(TX_ADDR, address, AddressWidth);
@@ -162,13 +170,21 @@ void openWritingPipe(const void* address) {  // LSB first
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	write_register(NRF_CONFIG, 1 << MASK_RX_DR | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
   // IRQ pin low on DataSent or MAX_RT retries
+
+	nRF24IRQ->CTL1 |= UCSWRST;
+	nRF24IRQ->CTL0 = 0; // default
+	nRF24IRQ->CTL1 = UCSSEL_2 | UCBRKIE | UCSWRST; // SMCLK
+	nRF24IRQ->BR0 = 1;
+	nRF24IRQport->SEL = nRF24IRQpin;  // RxD
+	nRF24IRQ->CTL1 &= ~UCSWRST;
+
+	nRF24IRQ->IE = UCRXIE; // only when UCSWRST = 0!
+	nRF24IRQ->IFG = 0;
 }
 
+// Note: can send back a payload in ACK packet
 
 bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
-	const bool ShortCE = false;
-	const bool LongCE = true;  // for +PA PowerAmp enable -- provide 150 mA !!
-
   // payload width is set by # bytes clocked into TX FIFO
 
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
@@ -185,19 +201,12 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 
-	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload
+	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload; longer CE to enable +PA
 
-	if (ShortCE) {
-		delay_us(10);
-		nRF24port->Out &= ~CE;
-	}
-
-	// TODO: better sleep uP waiting for IRQ or timeout timer wake ******
-	byte timeout = 120; // ms  (1 + 5 + 1 + 32 + 2 + 1) = 42 bytes / 250 kHz = (1.344ms * (tx + ack ) + retry (4ms)) * 15 retries
-  do {
-    delay(1); // PLL settle + packetSize * 8 * 4us * (transmit + ack)
-  	if (!LongCE) nRF24port->Out &= ~CE; // or later/earlier (10 us min pulse)
-  } while ((nRF24port->IN & IRQ) && --timeout);  // IRQ active LO
+	// use watchdog IRQ for timeout (shouldn't happen)
+	WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_5; // VLO 14kHz max / 2^13 = 585ms min
+	__bis_SR_register(LPM3_bits + GIE);  // sleep until IRQ->RxD start bit wake
+	WDTCTL = WDTPW | WDTHOLD;
 
 	nRF24port->Out &= ~CE;
 
@@ -205,10 +214,6 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
   if (!OK) {// Max retries exceeded or timeout
     flush_tx(); // only 1 packet in FIFO, so just flush
     flush_rx();
-    if (!timeout) {
-    	P2DIR = P2SEL = 0;  // LEDs off
-    	delay(250); // will flash green
-    }
   }
 
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits

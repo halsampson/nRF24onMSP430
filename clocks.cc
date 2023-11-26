@@ -88,7 +88,7 @@ void delay_us(word us) {
 }
 
 
-void delay(word ms) {  // TODO: better sleep with timer wake
+void delay(word ms) {  // TODO: better sleep with timer wake: RTC 32kHz
 	// static word ms_cycles = actualCPUHz / 1000 - 6;  // adjust for while loop
 	const word ms_cycles = NomCPUHz / 1000 - 6;
 	while (ms--)

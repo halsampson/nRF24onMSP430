@@ -4,6 +4,12 @@
 #include <nRF24L01.h>
 #include <SPIlite.h>
 
+// configure IRQ
+#define nRF24IRQ     ((UCAx*)USCI_A3_BASE)
+#define P10_BASE_OK  (P10_BASE + 1)          // P10_BASE == P9_BASE - wrong!!
+#define nRF24IRQport ((PortB*)P10_BASE_OK)
+#define nRF24IRQpin  BIT5 // UCA3RxD on JP12 wire to JP1-8 IRQ
+
 const byte PayloadSize = 32; // max if dynamic
 extern byte status;
 

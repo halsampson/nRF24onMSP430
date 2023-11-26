@@ -48,13 +48,12 @@ typedef struct {
 
 // port/pin configurations - modify _BASE and pin numbers as needed
 #define nRF24SPI ((UCAx*)USCI_A2_BASE)
-
 #define nRF24port ((PortB*)P9_BASE)
 
 #define SCLK    BIT0  // UCA2CLK
 #define CSN     BIT1  // SPI
 #define CE      BIT2
-#define IRQ	     BIT3
+#define IRQ	     BIT3  // TODO wired to JP12 UCA3RxD for interrupt
 #define SDO     BIT4  // UCA2SIMO
 #define SDI     BIT5  // UCA2SOMI
 

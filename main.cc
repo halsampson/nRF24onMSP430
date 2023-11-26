@@ -57,10 +57,6 @@ __interrupt void Port_2(void) {
 }
 
 
-#if 0
-
-#define DUMP_REGISTERS
-
 byte regs[FEATURE + 1];
 byte txaddr[5], rxaddr[5];
 
@@ -70,7 +66,7 @@ void dump_registers() {
 	read_register(TX_ADDR, txaddr, sizeof txaddr);
 	read_register(RX_ADDR_P0, rxaddr, sizeof rxaddr);
 }
-#endif
+
 
 // Port P2
 #define LEDCath BIT2  // JP2-5  TA1.1
@@ -121,6 +117,72 @@ void checkSwitches() {
 }
 
 
+void testTx() {
+  dump_registers();
+
+  byte seq;
+  while (1){
+		const byte MaxRetries = 15;
+    byte retries = read_register(OBSERVE_TX) & 0xF;
+    setLEDlevel(retries);
+
+    char data[ 1 + MaxRetries + 2] = ".................";
+    data[seq++ % (1 + MaxRetries)] = '\\';
+    data[1 + MaxRetries - retries] = '\n';
+    data[1 + MaxRetries - retries + 1] = 0;
+    write(data, 1 + MaxRetries - retries + 2);
+
+    checkSwitches();
+    delay(50);
+  }
+}
+
+word readADC() {
+
+	// LPM3
+
+	return 0;
+}
+
+void adcLogging() {
+
+	struct {
+		word adcNow;
+		word adcMin;
+		word adcMax;
+		word adcCal;   // Vdd vs. internal 2.5V
+		word retries;  // total since last successful ACKed packet
+		byte ID;
+	} payload;
+	// Note: overhead is 9 bytes
+
+  payload.ID = 'C';
+
+  // ADC setup, incl wake interrupt
+
+	while (1) {
+		payload.adcMin = 0xFFFF;
+		payload.adcMax = 0;
+
+	  for (word sample = 60000; sample; --sample) {
+	    payload.adcNow = readADC();  // 14 us?
+	    if (payload.adcNow < payload.adcMin)
+	    	payload.adcMin = payload.adcNow;
+	    else if (payload.adcNow > payload.adcMax)
+	    	payload.adcMax = payload.adcNow;
+	  }
+
+	  payload.retries = 0;
+	  bool sent;
+	  do {
+	    sent = write(&payload, sizeof(payload));
+	    payload.retries += read_register(OBSERVE_TX) & 0xF;
+	  } while (!sent);
+	}
+
+}
+
+
 int main(void) {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
@@ -144,25 +206,11 @@ int main(void) {
 
   openWritingPipe(RFaddr);
 
-#ifdef DUMP_REGISTERS
-   dump_registers();
+#if 1
+  testTx();
 #endif
 
-  byte seq;
-  while (1){
-    const byte MaxRetries = 15;
-    byte retries = read_register(OBSERVE_TX) & 0xF;
-    setLEDlevel(retries);
-
-    char data[ 1 + MaxRetries + 2] = ".................";
-    data[seq++ % (1 + MaxRetries)] = '\\';
-    data[1 + MaxRetries - retries] = '\n';
-    data[1 + MaxRetries - retries + 1] = 0;
-    write(data, 1 + MaxRetries - retries + 2);
-
-    checkSwitches();
-    delay(50);
-  }
+  adcLogging();
 
 	return 0;
 }
