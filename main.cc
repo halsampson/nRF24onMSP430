@@ -152,39 +152,61 @@ word readADC() {
 	return ADC12MEM0;
 }
 
+
+
+
 void adcLogging() {
 
 	struct {
 		word adcNow;
 		word adcMin;
 		word adcMax;
+
+#ifdef CALIB
 		word adcCal;   // occasionally read 2.5V (slow, extra power) with Vdd ref (fast)
+		word adcGain;
+		word adcOfs;
+		word adc25Ref;
+#endif
 		word retries;  // total since last successful ACKed packet
 		byte ID;
 	} payload;
-	// Note: overhead is 9 bytes
+	// Note: packet overhead is 9 bytes
 
 	P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
 
   payload.ID = 'C';
 
+#ifdef CALIB  // resistor divider calibration also needed, so combine
+  payload.adcGain = *(word*)0x1A16;
+  payload.adcOfs  = *(word*)0x1a18;
+  payload.adc25Ref  = *(word*)0x1a2C;
+#endif
+
   ADC_PORT->SEL |= ADC_PIN;
   ADC12CTL0 &= ADC12ENC;
   ADC12CTL1 = ADC12SHP |  ADC12DIV_3 | ADC12SSEL_0;  // ADC12OSC = MODOSC
-  ADC12CTL2 = ADC12TCOFF | ADC12RES_2; // 12 bit
+  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
   ADC12IE = ADC12IE0;
 
-  P5OUT &= ~BIT1;  // VREF-
-  P5SEL |= BIT1;
+  P6SEL |= BIT0; // A0
+
+#ifdef CALIB
+  P5SEL |= BIT0; // A8
+  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
+#endif
 
 	while (1) {
+	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s
+
 		payload.adcMin = 0xFFFF;
 		payload.adcMax = 0;
 
 	  // ADC setup to switch to read 12V
-	  ADC12MCTL0 = ADC12EOS; // AVcc:A0
-	  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
+	  ADC12CTL0 &= ADC12ENC;
 	  ADC12CTL0 = ADC12SHT0_2 | ADC12ON;
+	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
+	  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
 
 	  for (word sample = 60000; sample; --sample) {
 	    payload.adcNow = readADC();
@@ -194,12 +216,12 @@ void adcLogging() {
 	    	payload.adcMax = payload.adcNow;
 	  }
 
-	  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
+#ifdef CALIB
 	  ADC12CTL0 &= ADC12ENC;
-	  ADC12CTL0 = ADC12SHT0_9 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
-	  ADC12MCTL0 = ADC12EOS | ADC12INCH_9; // AVcc:Vref
+	  ADC12CTL0 = ADC12SHT0_2 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
+	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_8; // Vref / Vcc
 	  payload.adcCal = readADC();
-	  REFCTL0 = REFTCOFF; // REF off
+#endif
 
 	  payload.retries = 0;
 	  bool sent;

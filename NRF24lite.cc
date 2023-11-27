@@ -203,9 +203,8 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload; longer CE to enable +PA
 
 	// use watchdog IRQ for timeout (shouldn't happen)
-	WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_5; // VLO 14kHz max / 2^13 = 585ms min
+	if (WDTCTL & WDTHOLD) WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_5; // VLO 14kHz max / 2^13 > 585ms
 	__bis_SR_register(LPM3_bits + GIE);  // sleep until IRQ->RxD start bit wake
-	WDTCTL = WDTPW | WDTHOLD;
 
 	nRF24port->Out &= ~CE;
 
@@ -215,6 +214,7 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
     flush_rx();
   }
 
+  if (WDTCTL & 7 == WDTIS_5) WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	return OK;
 }
