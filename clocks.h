@@ -1,15 +1,15 @@
-
 #ifndef CLOCKS_H_
 #define CLOCKS_H_
 
-// 24 MHz / 32 * N / 32 FLL steps   DCO max 135 MHz -> FLL Div ~180 max
-
-const unsigned long BaudRate = 921600L;
-const unsigned long NomCPUHz = 16 * BaudRate;
-
-typedef unsigned int word;
 typedef unsigned char byte;
-typedef signed char int8;
+typedef   signed char int8;
+typedef unsigned int  word;
+typedef unsigned long uint32;
+typedef unsigned long long uint64;
+
+// 24 MHz / 32 * N / 32 FLL steps   DCO max 135 MHz -> FLL Div ~180 max
+const uint32 BaudRate = 2000000L;
+const uint32 NomCPUHz = 8 * BaudRate;
 
 long setCPUClockREFO(long CPUHz);
 

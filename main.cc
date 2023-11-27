@@ -143,17 +143,14 @@ __interrupt void ADC_12(void) {
   __bic_SR_register_on_exit (LPM3_bits);
 }
 
-#define ADC_PORT ((PortB*)P1_BASE)
-#define ADC_PIN  BIT1
+#define ADC_PORT ((PortB*)(P6_BASE + 1))
+#define ADC_PIN  BIT0
 
 word readADC() {
   ADC12CTL0 |= ADC12ENC | ADC12SC;
 	__bis_SR_register(LPM3_bits + GIE);  // sleep
 	return ADC12MEM0;
 }
-
-
-
 
 void adcLogging() {
 
@@ -183,13 +180,17 @@ void adcLogging() {
   payload.adc25Ref  = *(word*)0x1a2C;
 #endif
 
-  ADC_PORT->SEL |= ADC_PIN;
+  ADC_PORT->SEL |= ADC_PIN; // A0
   ADC12CTL0 &= ADC12ENC;
   ADC12CTL1 = ADC12SHP |  ADC12DIV_3 | ADC12SSEL_0;  // ADC12OSC = MODOSC
   ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
   ADC12IE = ADC12IE0;
 
-  P6SEL |= BIT0; // A0
+  // ADC setup to switch to read 12V - in loop ifdef CALIB
+  ADC12CTL0 = ADC12SHT0_2 | ADC12ON;
+  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
+  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
+
 
 #ifdef CALIB
   P5SEL |= BIT0; // A8
@@ -202,19 +203,23 @@ void adcLogging() {
 		payload.adcMin = 0xFFFF;
 		payload.adcMax = 0;
 
-	  // ADC setup to switch to read 12V
-	  ADC12CTL0 &= ADC12ENC;
-	  ADC12CTL0 = ADC12SHT0_2 | ADC12ON;
-	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
-	  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
+	  long sum = 0;
+	  for (word j = 2048 / 16; j--;) {
+	  	word sum16 = 0;
+	  	for (byte i = 16; i--;) {
+	  		sum16 += readADC();
+	  		delay(1);
+	  	}
 
-	  for (word sample = 60000; sample; --sample) {
-	    payload.adcNow = readADC();
-	    if (payload.adcNow < payload.adcMin)
-	    	payload.adcMin = payload.adcNow;
-	    else if (payload.adcNow > payload.adcMax)
-	    	payload.adcMax = payload.adcNow;
+	    if (sum16 < payload.adcMin)
+	    	payload.adcMin = sum16;
+	    else if (sum16 > payload.adcMax)
+	    	payload.adcMax = sum16;
+
+	    sum += sum16;
 	  }
+
+	  payload.adcNow = sum / (2048 / 16);
 
 #ifdef CALIB
 	  ADC12CTL0 &= ADC12ENC;

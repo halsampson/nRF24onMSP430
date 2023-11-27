@@ -69,9 +69,10 @@ long setCPUClockREFO(long CPUHz) {
 	stableDCO();
 
 	UCSCTL4 = SELA_3 | SELS_3 | SELM_3;         // all from  DCOCLK; or any / 2 with DCOCLKDIV
+	UCSCTL5 = DIVA_4;  // ACLK = MCLK / 16
 
 	// UCA0BRW = (CPUHz + BaudRate / 2) / BaudRate;
-	UCA0CTL1 = UCSSEL_1; // ACLK
+	UCA0CTL1 = UCSSEL_2; // SMCLK
 
 	UCSCTL7 &= ~DCOFFG;
 	SFRIFG1 &= ~OFIFG;
@@ -80,18 +81,35 @@ long setCPUClockREFO(long CPUHz) {
 }
 
 
+#pragma vector=TIMER1_A0_VECTOR
+__interrupt void TIMER1_A0_CC0(void) {
+  __bic_SR_register_on_exit (LPM3_bits);
+}
+
 void delay_us(word us) {
-	// static byte us_cycles = actualCPUHz / 1000000 - 6;
-	const byte us_cycles = NomCPUHz / 1000000 - 6; // TODO: adjust loop overhead, beware CPUHz < 6 MHz ****
-	while (us--)
-		__delay_cycles(us_cycles);
+	TA1CTL = 0; // stop timer
+	TA1CCR0 = us;
+	TA1CCTL0 = CCIE;  // compare
+	TA1CTL = TASSEL_1 | ID_0 | MC_2 | TACLR | TAIE; // ACLK ~1 MHz
+	__bis_SR_register(LPM3_bits + GIE);  // sleep
 }
 
-
-void delay(word ms) {  // TODO: better sleep with timer wake: RTC 32kHz
-	// static word ms_cycles = actualCPUHz / 1000 - 6;  // adjust for while loop
-	const word ms_cycles = NomCPUHz / 1000 - 6;
+void delay(word ms) {
 	while (ms--)
-		__delay_cycles(ms_cycles);
+		delay_us(1000);
 }
 
+
+// TODO: better LPM3, wake
+// TODO: scale timer pre-divider to log2(time interval) to fit in 16 bit timer
+
+void usleep(uint64 us) {
+  TA1CTL = TASSEL_2 | ID_3 | MC_2 | TACLR;  // CPUHz / 16 = 1.8432 MHz   543ns
+  uint32 stopCount = (uint64)NomCPUHz / 16 / 1600 * us / (1000000 / 1600) - 1;
+  while (stopCount & 0xFFFF0000) {
+  	while (!(TA1CTL & TAIFG));  // wait for overflow
+  	TA1CTL &= ~TAIFG;
+  	stopCount -= 0x10000;
+  }
+  while (TA1R < stopCount);  // or set compare interrupt, sleep
+}
