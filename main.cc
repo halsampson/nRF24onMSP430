@@ -155,27 +155,29 @@ word readADC() {
 }
 
 void adcLogging() {
+  const byte ReportSecs = 2;
+
 	struct {
 		word adcNow;
 		word adcMin;
 		word adcMax;
-		word retries;  // total since last successful ACKed packet
+		word retries; // total
 		byte ID;
 	} payload;
 	// Note: packet overhead is 9 bytes
 
-  payload.ID = 'C';  // 'E'  'S'
+  payload.ID = 'C'; // 'E'  'S'
 
   ADC_PORT->SEL |= ADC_PIN; // A0
   ADC12CTL0 &= ADC12ENC;
-  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;  // ADC12OSC = MODOSC
+  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;  // ADC12OSC = MODOSC ~ 4.8 MHz
   ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
   ADC12IE = ADC12IE0;
 
   // ADC setup to switch to read 12V - in loop ifdef CALIB
-  ADC12CTL0 = ADC12SHT0_2 | ADC12ON;
+  ADC12CTL0 = ADC12SHT0_2 | ADC12ON; // input impedance 38KΩ * 25pF * ln(13) + 800ns = 3.2us * 4.8 MHz = 16 clocks
   ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
-  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
+  payload.retries = 0;
 
 	while (1) {
 	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s
@@ -185,12 +187,14 @@ void adcLogging() {
 		payload.adcMax = 0;
 
 	  long sum = 0;
-	  for (word j = 2048 / 16; j--;) {
+	  for (byte j = ReportSecs * 60; j--;) {
 	  	word sum16 = 0;
 	  	for (byte i = 16; i--;) {
 	  		sum16 += readADC();
-	  		delay(1); // why < 2.048 sec Ard timestamps??  -- test delay TODO
+	  		delay_us(1000000 / 16 / 60 - (16 + 14) / 4.8 - 0);  // ~60 Hz sum16s; (REFO 0.4% fast)
 	  	}
+
+	  	P1OUT ^= BIT1; // JP6-4 30 Hz next to 31.25kHz ACLK / 32 on pin 3
 
 	    if (sum16 < payload.adcMin)
 	    	payload.adcMin = sum16;
@@ -200,13 +204,12 @@ void adcLogging() {
 	    sum += sum16;
 	  }
 
-	  payload.adcNow = sum / (2048 / 16);
+	  payload.adcNow = sum / (ReportSecs * 60);
 
-	  payload.retries = 0;
 	  bool sent;
 	  do {
+	  	payload.retries += read_register(OBSERVE_TX) & 0xF;
 	    sent = write(&payload, sizeof(payload));
-	    payload.retries += read_register(OBSERVE_TX) & 0xF;
 	  } while (!sent);
 
 	  checkSwitches();
