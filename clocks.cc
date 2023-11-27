@@ -33,7 +33,8 @@ void stableDCO() {
   	unsigned int stable = 1024;
   	int lastUCSCTL0 = UCSCTL0;
   	while (abs((int)UCSCTL0 - lastUCSCTL0) <= 8 * 4) // ~ 0.25% MOD taps; stable within 1 %
-  		if (!stable--) return;
+  		if (!stable--)
+  			return;
   }
 }
 
@@ -64,12 +65,15 @@ long setCPUClockREFO(long CPUHz) {
 
   UCSCTL2 = FLLPow * FLLD_1 | FLLn;
   UCSCTL7 &= ~DCOFFG;
+
 	__bic_SR_register(SCG0);                // Enable the FLL control loop
 
 	stableDCO();
 
 	UCSCTL4 = SELA_3 | SELS_3 | SELM_3;         // all from  DCOCLK; or any / 2 with DCOCLKDIV
-	UCSCTL5 = DIVA_4;  // ACLK = MCLK / 16
+	UCSCTL5 = DIVPA_5 | DIVA_4;  // ACLK = DCO / 16   external / 32
+	P1SEL = BIT0;  // 1MHz / 32 = 31.25kHz on JP6-3
+	P1DIR |= BIT0;
 
 	// UCA0BRW = (CPUHz + BaudRate / 2) / BaudRate;
 	UCA0CTL1 = UCSSEL_2; // SMCLK
@@ -81,35 +85,20 @@ long setCPUClockREFO(long CPUHz) {
 }
 
 
-#pragma vector=TIMER1_A0_VECTOR
-__interrupt void TIMER1_A0_CC0(void) {
-  __bic_SR_register_on_exit (LPM3_bits);
+#pragma vector=TIMER0_A0_VECTOR
+__interrupt void TIMER0_A0_CCR0(void) {
+  __bic_SR_register_on_exit (LPM0_bits);
 }
 
 void delay_us(word us) {
-	TA1CTL = 0; // stop timer
-	TA1CCR0 = us;
-	TA1CCTL0 = CCIE;  // compare
-	TA1CTL = TASSEL_1 | ID_0 | MC_2 | TACLR | TAIE; // ACLK ~1 MHz
-	__bis_SR_register(LPM3_bits + GIE);  // sleep
+	TA0CCR0 = us - 2; // overhead
+	TA0CCTL0 = CCIE;  // compare
+	TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR; // ACLK ~1 MHz
+	__bis_SR_register(LPM0_bits + GIE);  // sleep     TODO: Fix FLL lock lost after LPM1+ with FLL off
+	TA0CTL = TACLR; // stop
 }
 
 void delay(word ms) {
 	while (ms--)
 		delay_us(1000);
-}
-
-
-// TODO: better LPM3, wake
-// TODO: scale timer pre-divider to log2(time interval) to fit in 16 bit timer
-
-void usleep(uint64 us) {
-  TA1CTL = TASSEL_2 | ID_3 | MC_2 | TACLR;  // CPUHz / 16 = 1.8432 MHz   543ns
-  uint32 stopCount = (uint64)NomCPUHz / 16 / 1600 * us / (1000000 / 1600) - 1;
-  while (stopCount & 0xFFFF0000) {
-  	while (!(TA1CTL & TAIFG));  // wait for overflow
-  	TA1CTL &= ~TAIFG;
-  	stopCount -= 0x10000;
-  }
-  while (TA1R < stopCount);  // or set compare interrupt, sleep
 }

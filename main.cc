@@ -8,12 +8,7 @@
 
 #include <private.txt> // RFch, RFaddr
 
-// TODO: send ADC12 for car monitor; low power sleep mode / wake
-//   also send retries to check
-
-// TODO: 3.3V better than 3.6V regulator
-//    best variable level
-
+// TODO: 3.3V better than 3.6V regulator?
 
 typedef struct {
 	volatile word IN, Out, DIR, REN, DS, SEL[2];
@@ -105,15 +100,22 @@ void setLEDlevel(byte level) { // 0: bright green .. 15: bright red
 #define S1 BIT1
 #define S2 BIT2
 
+bool diagMode;
+
 void checkSwitches() {
   if (!(P4IN & S1)) {
     setPAlevel(getPAlevel() - 1);
   	setLEDlevel(getPAlevel() << 2);   // red = higher
   	delay(500);
-  	while (!(P4IN & S1)); // wait for switch open
   }
 
-  if (!(P4IN & S2)) WDTCTL = 0; // restart
+  if (!(P4IN & S2)) {
+  	if ((diagMode = !diagMode))
+  		setLEDlevel(15); // red - on
+  	else setLEDlevel(0); // green - off
+  	delay(250);
+  }
+
 }
 
 
@@ -153,36 +155,20 @@ word readADC() {
 }
 
 void adcLogging() {
-
 	struct {
 		word adcNow;
 		word adcMin;
 		word adcMax;
-
-#ifdef CALIB
-		word adcCal;   // occasionally read 2.5V (slow, extra power) with Vdd ref (fast)
-		word adcGain;
-		word adcOfs;
-		word adc25Ref;
-#endif
 		word retries;  // total since last successful ACKed packet
 		byte ID;
 	} payload;
 	// Note: packet overhead is 9 bytes
 
-	P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
-
-  payload.ID = 'C';
-
-#ifdef CALIB  // resistor divider calibration also needed, so combine
-  payload.adcGain = *(word*)0x1A16;
-  payload.adcOfs  = *(word*)0x1a18;
-  payload.adc25Ref  = *(word*)0x1a2C;
-#endif
+  payload.ID = 'C';  // 'E'  'S'
 
   ADC_PORT->SEL |= ADC_PIN; // A0
   ADC12CTL0 &= ADC12ENC;
-  ADC12CTL1 = ADC12SHP |  ADC12DIV_3 | ADC12SSEL_0;  // ADC12OSC = MODOSC
+  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;  // ADC12OSC = MODOSC
   ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
   ADC12IE = ADC12IE0;
 
@@ -191,14 +177,9 @@ void adcLogging() {
   ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
   // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
 
-
-#ifdef CALIB
-  P5SEL |= BIT0; // A8
-  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
-#endif
-
 	while (1) {
 	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s
+		P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
 
 		payload.adcMin = 0xFFFF;
 		payload.adcMax = 0;
@@ -208,7 +189,7 @@ void adcLogging() {
 	  	word sum16 = 0;
 	  	for (byte i = 16; i--;) {
 	  		sum16 += readADC();
-	  		delay(1);
+	  		delay(1); // why < 2.048 sec Ard timestamps??  -- test delay TODO
 	  	}
 
 	    if (sum16 < payload.adcMin)
@@ -221,21 +202,20 @@ void adcLogging() {
 
 	  payload.adcNow = sum / (2048 / 16);
 
-#ifdef CALIB
-	  ADC12CTL0 &= ADC12ENC;
-	  ADC12CTL0 = ADC12SHT0_2 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
-	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_8; // Vref / Vcc
-	  payload.adcCal = readADC();
-#endif
-
 	  payload.retries = 0;
 	  bool sent;
 	  do {
 	    sent = write(&payload, sizeof(payload));
 	    payload.retries += read_register(OBSERVE_TX) & 0xF;
 	  } while (!sent);
-	}
 
+	  checkSwitches();
+
+	  if (diagMode && payload.retries > 1) {
+	  	setLEDlevel(payload.retries);  // can be > 15
+	  	delay(50);  // still low power
+	  }
+	}
 }
 
 
@@ -248,7 +228,7 @@ int main(void) {
 
   for (byte level = 0; level < 16; ++level) {
     setLEDlevel(level);
-    delay(50);
+    delay(20);
   }
 
   initRF24();
@@ -271,3 +251,24 @@ int main(void) {
 	return 0;
 }
 
+
+
+
+#ifdef CALIB  // resistor divider calibration also needed, so combine
+  payload.adcGain = *(word*)0x1A16;
+  payload.adcOfs  = *(word*)0x1a18;
+  payload.adc25Ref  = *(word*)0x1a2C;
+#endif
+
+#ifdef CALIB
+  P5SEL |= BIT0; // A8
+  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
+#endif
+
+
+#ifdef CALIB
+	  ADC12CTL0 &= ADC12ENC;
+	  ADC12CTL0 = ADC12SHT0_2 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
+	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_8; // Vref / Vcc
+	  payload.adcCal = readADC();
+#endif
