@@ -137,11 +137,19 @@ void testTx() {
   }
 }
 
+#pragma vector=ADC12_VECTOR
+__interrupt void ADC_12(void) {
+	ADC12IFG = 0;
+  __bic_SR_register_on_exit (LPM3_bits);
+}
+
+#define ADC_PORT ((PortB*)P1_BASE)
+#define ADC_PIN  BIT1
+
 word readADC() {
-
-	// LPM3
-
-	return 0;
+  ADC12CTL0 |= ADC12ENC | ADC12SC;
+	__bis_SR_register(LPM3_bits + GIE);  // sleep
+	return ADC12MEM0;
 }
 
 void adcLogging() {
@@ -150,27 +158,48 @@ void adcLogging() {
 		word adcNow;
 		word adcMin;
 		word adcMax;
-		word adcCal;   // Vdd vs. internal 2.5V
+		word adcCal;   // occasionally read 2.5V (slow, extra power) with Vdd ref (fast)
 		word retries;  // total since last successful ACKed packet
 		byte ID;
 	} payload;
 	// Note: overhead is 9 bytes
 
+	P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
+
   payload.ID = 'C';
 
-  // ADC setup, incl wake interrupt
+  ADC_PORT->SEL |= ADC_PIN;
+  ADC12CTL0 &= ADC12ENC;
+  ADC12CTL1 = ADC12SHP |  ADC12DIV_3 | ADC12SSEL_0;  // ADC12OSC = MODOSC
+  ADC12CTL2 = ADC12TCOFF | ADC12RES_2; // 12 bit
+  ADC12IE = ADC12IE0;
+
+  P5OUT &= ~BIT1;  // VREF-
+  P5SEL |= BIT1;
 
 	while (1) {
 		payload.adcMin = 0xFFFF;
 		payload.adcMax = 0;
 
+	  // ADC setup to switch to read 12V
+	  ADC12MCTL0 = ADC12EOS; // AVcc:A0
+	  // 50K input impedance -> 50KΩ * 25pF * ln(13) + 800ns = 4us = 16 clocks
+	  ADC12CTL0 = ADC12SHT0_2 | ADC12ON;
+
 	  for (word sample = 60000; sample; --sample) {
-	    payload.adcNow = readADC();  // 14 us?
+	    payload.adcNow = readADC();
 	    if (payload.adcNow < payload.adcMin)
 	    	payload.adcMin = payload.adcNow;
 	    else if (payload.adcNow > payload.adcMax)
 	    	payload.adcMax = payload.adcNow;
 	  }
+
+	  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
+	  ADC12CTL0 &= ADC12ENC;
+	  ADC12CTL0 = ADC12SHT0_9 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
+	  ADC12MCTL0 = ADC12EOS | ADC12INCH_9; // AVcc:Vref
+	  payload.adcCal = readADC();
+	  REFCTL0 = REFTCOFF; // REF off
 
 	  payload.retries = 0;
 	  bool sent;
@@ -206,7 +235,7 @@ int main(void) {
 
   openWritingPipe(RFaddr);
 
-#if 1
+#if 0
   testTx();
 #endif
 

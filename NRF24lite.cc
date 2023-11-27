@@ -161,7 +161,6 @@ __interrupt void USCI_A3(void) {
   __bic_SR_register_on_exit(LPM3_bits);
 }
 
-
 void openWritingPipe(const void* address) {  // LSB first
   write_register(TX_ADDR, address, AddressWidth);
   write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
@@ -182,14 +181,14 @@ void openWritingPipe(const void* address) {  // LSB first
 	nRF24IRQ->IFG = 0;
 }
 
+
 // Note: can send back a payload in ACK packet
 
 bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminated if no len given
-  // payload width is set by # bytes clocked into TX FIFO
-
 	xferSPI(W_TX_PAYLOAD);  // w/ ACK
 
-	int8 payloadLen = PayloadSize;
+  // payload width is set by # bytes clocked into TX FIFO
+	int8 payloadLen = PayloadSize; // Max size if not staticPayloadSize
 	while (len-- && (len >= 0 || *(byte*)buf)) {  // negative len means null terminated string
 	  xferSPI(*(byte*)buf);
 	  buf = (void*)((byte*)buf + 1);
@@ -211,8 +210,8 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	nRF24port->Out &= ~CE;
 
   bool OK = get_status() & (1 << TX_DS); // DataSent
-  if (!OK) {// Max retries exceeded or timeout
-    flush_tx(); // only 1 packet in FIFO, so just flush
+  if (!OK) { // Max retries all failed to ACK
+  	flush_tx(); // only 1 packet in FIFO, so just flush
     flush_rx();
   }
 
