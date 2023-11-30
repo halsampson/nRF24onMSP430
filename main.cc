@@ -146,13 +146,18 @@ __interrupt void ADC_12(void) {
 }
 
 #define ADC_PORT ((PortB*)(P6_BASE + 1))
-#define ADC_PIN  BIT0
+#define ADC_CH   0                       // A0: JP10-4  or  A1: JP10-6 next to Gnd, blown shorted on 1st proto board
+#define ADC_PIN  (1 << ADC_CH)
+
 
 word readADC() {
   ADC12CTL0 |= ADC12ENC | ADC12SC;
 	__bis_SR_register(LPM3_bits + GIE);  // sleep
 	return ADC12MEM0;
 }
+
+bool wdtReset;
+byte reconnect; // every 512 seconds
 
 void adcLogging() {
   const byte ReportSecs = 2;
@@ -176,15 +181,13 @@ void adcLogging() {
 
   // ADC setup to switch to read 12V - in loop ifdef CALIB
   ADC12CTL0 = ADC12SHT0_2 | ADC12ON; // input impedance 38KΩ * 25pF * ln(13) + 800ns = 3.2us * 4.8 MHz = 16 clocks
-  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0; // A0 / AVcc
-  payload.retries = 0;
+  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0 + ADC_CH; // An / AVcc
+
+	payload.adcMin = 0xFFFF;
 
 	while (1) {
 	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s
 		P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
-
-		payload.adcMin = 0xFFFF;
-		payload.adcMax = 0;
 
 	  long sum = 0;
 	  for (byte j = ReportSecs * 60; j--;) {
@@ -206,11 +209,15 @@ void adcLogging() {
 
 	  payload.adcNow = sum / (ReportSecs * 60);
 
-	  bool sent;
-	  do {
-	  	payload.retries += read_register(OBSERVE_TX) & 0xF;
-	    sent = write(&payload, sizeof(payload));
-	  } while (!sent);
+    if (!wdtReset || !++reconnect) {
+			do 	payload.retries += read_register(OBSERVE_TX) & 0xF;
+			while (!write(&payload, sizeof(payload)));  // WDT reset here if can't send
+
+			// sent packet OK
+      wdtReset = false;
+			payload.adcMin = 0xFFFF;
+			payload.adcMax = 0;
+    }
 
 	  checkSwitches();
 
@@ -223,16 +230,18 @@ void adcLogging() {
 
 
 int main(void) {
+	wdtReset = SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
 
 	setCPUClockREFO(NomCPUHz);
 	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
 
-  for (byte level = 0; level < 16; ++level) {
-    setLEDlevel(level);
-    delay(20);
-  }
+	if (!wdtReset)  // not WDT wake
+		for (byte level = 0; level < 16; ++level) {
+			setLEDlevel(level);
+			delay(20);
+		}
 
   initRF24();
 

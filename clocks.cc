@@ -71,7 +71,7 @@ long setCPUClockREFO(long CPUHz) {
 	stableDCO();
 
 	UCSCTL4 = SELA_3 | SELS_3 | SELM_3;         // all from  DCOCLK; or any / 2 with DCOCLKDIV
-	UCSCTL5 = DIVPA_5 | DIVA_4;  // ACLK = DCO / 16   external / 32
+	UCSCTL5 = DIVPA__32 | DIVA__16;  // ACLK = DCO / 16 = 1 MHz   external / 32
 	P1SEL = BIT0;  // 1MHz / 32 = 31.25kHz on JP6-3
 	P1DIR |= BIT0;
 
@@ -90,7 +90,7 @@ __interrupt void TIMER0_A0_CCR0(void) {
   __bic_SR_register_on_exit (LPM0_bits);
 }
 
-void delay_us(word us) {
+void delay_us(word us) {  // TODO: assumes 1 MHz ACLK
 	TA0CCR0 = us - 2; // overhead
 	TA0CCTL0 = CCIE;  // compare
 	TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR; // ACLK ~1 MHz
