@@ -48,14 +48,6 @@ void flush_tx(void) {
   write_register(FLUSH_TX, RF24_NOP);
 }
 
-// in bits
-const byte PacketOvhd = 8 + 9;    // preamble, control
-const byte AddressWidth = 5;  // pipe 0 and 1 max (others 1 byte)
-const byte CRCWidth = 2;
-
-word packetBits = PacketOvhd + AddressWidth * 8 + (word)PayloadSize * 8 + CRCWidth * 8;
-const bool staticPayloadSize = false;
-
 const byte dataRate = 0 ? 0 : 1 << RF_DR_LOW;  //  1 << RF_DR_HIGH  sets 2 Mbps;  0 = 1 Mbps
 
 void setPAlevel(byte level) { // 0..3: * 6 - 18 = dBm out  lower for YJ-25008+PA? vs. overload, esp 3.6V
@@ -69,6 +61,16 @@ byte getPAlevel() {
 void setChannel(byte channel) {
 	write_register(RF_CH, channel & 0x7F);
 }
+
+
+const byte PacketOvhd = 8 + 9;    // preamble, control
+const byte AddressWidth = 5;  // pipe 0 and 1 max (others 1 byte)
+const bool staticPayloadSize = false;
+// payloadSize
+const byte CRCWidth = 2;
+
+// word packetBits = PacketOvhd + AddressWidth * 8 + (word)PayloadSize * 8 + CRCWidth * 8;
+
 
 void initRF24() {
   initSPI();

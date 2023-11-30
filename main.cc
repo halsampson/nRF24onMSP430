@@ -118,7 +118,6 @@ void checkSwitches() {
 
 }
 
-
 void testTx() {
   dump_registers();
 
@@ -156,20 +155,37 @@ word readADC() {
 	return ADC12MEM0;
 }
 
-bool wdtReset;
-byte reconnect; // every 512 seconds
+struct {
+	word adcNow;
+	word adcMin;
+	word adcMax;
+	word retries; // total
+	byte ID;
+} payload;
+// Note: packet overhead is 9 bytes
+
+bool away;
+
+bool transmit() {
+	static byte reconnectWait;
+  if (away && ++reconnectWait) // slow retries to 512 seconds when away
+  	return false;
+
+  byte sendTries = 4;
+  while (sendTries--) {
+		payload.retries += read_register(OBSERVE_TX) & 0xF;
+		if (write(&payload, sizeof(payload))) {
+			away = false; // back reconnected OK
+			return true;  // WDT reset here if can't send
+		}
+  }
+  away = true;
+  return false;
+}
 
 void adcLogging() {
   const byte ReportSecs = 2;
-
-	struct {
-		word adcNow;
-		word adcMin;
-		word adcMax;
-		word retries; // total
-		byte ID;
-	} payload;
-	// Note: packet overhead is 9 bytes
+  const byte SampleHz = 60;
 
   payload.ID = 'C'; // 'E'  'S'
 
@@ -186,15 +202,15 @@ void adcLogging() {
 	payload.adcMin = 0xFFFF;
 
 	while (1) {
-	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s
+	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s, typ. 3.5s
 		P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
 
 	  long sum = 0;
-	  for (byte j = ReportSecs * 60; j--;) {
+	  for (byte j = ReportSecs * SampleHz; j--;) {
 	  	word sum16 = 0;
 	  	for (byte i = 16; i--;) {
 	  		sum16 += readADC();
-	  		delay_us(1000000 / 16 / 60 - (16 + 14) / 4.8 - 0);  // ~60 Hz sum16s; (REFO 0.4% fast)
+	  		delay_us(1000000 / 16 / SampleHz - (16 + 14) / 4.8 - 0);  // ~60 Hz sum16s; (REFO 0.4% fast)
 	  	}
 
 	  	P1OUT ^= BIT1; // JP6-4 30 Hz next to 31.25kHz ACLK / 32 on pin 3
@@ -207,17 +223,14 @@ void adcLogging() {
 	    sum += sum16;
 	  }
 
-	  payload.adcNow = sum / (ReportSecs * 60);
+	  payload.adcNow = sum / (ReportSecs * SampleHz);
 
-    if (!wdtReset || !++reconnect) {
-			do 	payload.retries += read_register(OBSERVE_TX) & 0xF;
-			while (!write(&payload, sizeof(payload)));  // WDT reset here if can't send
+	  // TODO: send calibrated CPU temperature ***
 
-			// sent packet OK
-      wdtReset = false;
-			payload.adcMin = 0xFFFF;
-			payload.adcMax = 0;
-    }
+    if (transmit()) {
+  		payload.adcMin = 0xFFFF;
+  		payload.adcMax = 0;
+    } // else accumulate min/max over away trip
 
 	  checkSwitches();
 
@@ -229,15 +242,18 @@ void adcLogging() {
 }
 
 
+// TODO: slower clock, lower Vcore, LPM1+ while ADC sampling using a timer, ..
+
+
 int main(void) {
-	wdtReset = SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
+	away = SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
 
 	setCPUClockREFO(NomCPUHz);
 	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
 
-	if (!wdtReset)  // not WDT wake
+	if (!away)  // not WDT wake
 		for (byte level = 0; level < 16; ++level) {
 			setLEDlevel(level);
 			delay(20);
@@ -262,25 +278,3 @@ int main(void) {
 
 	return 0;
 }
-
-
-
-
-#ifdef CALIB  // resistor divider calibration also needed, so combine
-  payload.adcGain = *(word*)0x1A16;
-  payload.adcOfs  = *(word*)0x1a18;
-  payload.adc25Ref  = *(word*)0x1a2C;
-#endif
-
-#ifdef CALIB
-  P5SEL |= BIT0; // A8
-  REFCTL0 = REFMSTR | REFVSEL_2 | REFTCOFF | REFOUT | REFON; // 2.5V
-#endif
-
-
-#ifdef CALIB
-	  ADC12CTL0 &= ADC12ENC;
-	  ADC12CTL0 = ADC12SHT0_2 | ADC12REF2_5V | ADC12REFON | ADC12ON; // 75us settle = 300 clocks (384)
-	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_8; // Vref / Vcc
-	  payload.adcCal = readADC();
-#endif
