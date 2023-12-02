@@ -87,16 +87,23 @@ long setCPUClockREFO(long CPUHz) {
 
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void TIMER0_A0_CCR0(void) {
-  __bic_SR_register_on_exit (LPM0_bits);
+  __bic_SR_register_on_exit (LPM3_bits);
 }
 
+#define ACLK_1048576
+
 void delay_us(word us) {  // TODO: assumes 1 MHz ACLK
+#ifdef ACLK_1048576
+	us -= us / 32;
+	us -= us / 64;
+#endif
 	TA0CCR0 = us - 2; // overhead
 	TA0CCTL0 = CCIE;  // compare
 	TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR; // ACLK ~1 MHz
-	__bis_SR_register(LPM0_bits + GIE);  // sleep     TODO: Fix FLL lock lost after LPM1+ with FLL off
+	__bis_SR_register(LPM3_bits + GIE);  // sleep     TODO: Fix FLL lock lost after LPM1+ with FLL off
 	TA0CTL = TACLR; // stop
 }
+
 
 void delay(word ms) {
 	while (ms--)

@@ -8,8 +8,6 @@
 
 #include <private.txt> // RFch, RFaddr
 
-// TODO: 3.3V better than 3.6V regulator?
-
 typedef struct {
 	volatile word IN, Out, DIR, REN, DS, SEL[2];
 	volatile word IV1; // port 1/2 only
@@ -118,11 +116,16 @@ void checkSwitches() {
 
 }
 
-void testTx() {
-  dump_registers();
+void testTx() { // retries to LEDs for signal propagation walk testing
+	for (byte level = 0; level < 16; ++level) {
+		setLEDlevel(level);
+		delay(20);
+	}
+
+	dump_registers();
 
   byte seq;
-  while (1){
+  while (1) {
 		const byte MaxRetries = 15;
     byte retries = read_register(OBSERVE_TX) & 0xF;
     setLEDlevel(retries);
@@ -155,21 +158,38 @@ word readADC() {
 	return ADC12MEM0;
 }
 
+int readDIeTemp() {
+	#define TAG_ADC12               0x1A14
+  #define CAL_ADC_GAIN_FACTOR   (*((uint*)(TAG_ADC12 + 2)))     // ~32768
+  #define CAL_ADC_OFFSET         (*((int*)(TAG_ADC12 + 4)))
+
+	#define CAL_ADC_15T30          (*((int*)(TAG_ADC12 + 6)))
+	#define CAL_ADC_15T85          (*((int*)(TAG_ADC12 + 8)))
+
+	#define CAL_ADC_15VREF_FACTOR  (*((unsigned int*)(TAG_ADC12 + 20)))     // ~32768
+  #define CAL_ADC_20VREF_FACTOR  (*((unsigned int*)(TAG_ADC12 + 22)))     // ~32768
+	#define CAL_ADC_25VREF_FACTOR  (*((unsigned int*)(TAG_ADC12 + 24)))   // ~32768
+
+  return ((int)readADC() - CAL_ADC_15T30) * (85 - 30) * 100 / (CAL_ADC_15T85 - CAL_ADC_15T30) + 30 * 100;  // in hundredths of degrees Celsius
+}
+
 struct {
 	word adcNow;
 	word adcMin;
 	word adcMax;
 	word retries; // total
-	byte ID;
+	char ID;
 } payload;
 // Note: packet overhead is 9 bytes
 
 bool away;
 
 bool transmit() {
+#if 1  // 0 for quick testing
 	static byte reconnectWait;
   if (away && ++reconnectWait) // slow retries to 512 seconds when away
   	return false;
+#endif
 
   byte sendTries = 4;
   while (sendTries--) {
@@ -183,11 +203,13 @@ bool transmit() {
   return false;
 }
 
-void adcLogging() {
-  const byte ReportSecs = 2;
-  const byte SampleHz = 60;
+byte unit;
 
-  payload.ID = 'C'; // 'E'  'S'
+void adcLogging() {
+  const byte Sample16Hz = 60;
+  const byte SamplesPerReport = 128;// ~2 sec
+
+  payload.ID = RFaddr[unit][0];
 
   ADC_PORT->SEL |= ADC_PIN; // A0
   ADC12CTL0 &= ADC12ENC;
@@ -196,7 +218,7 @@ void adcLogging() {
   ADC12IE = ADC12IE0;
 
   // ADC setup to switch to read 12V - in loop ifdef CALIB
-  ADC12CTL0 = ADC12SHT0_2 | ADC12ON; // input impedance 38KΩ * 25pF * ln(13) + 800ns = 3.2us * 4.8 MHz = 16 clocks
+  ADC12CTL0 = ADC12SHT0_12 | ADC12ON; // input impedance 38KΩ * 25pF * ln(13) + 800ns = 3.2us * 4.8 MHz = 16 clocks
   ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0 + ADC_CH; // An / AVcc
 
 	payload.adcMin = 0xFFFF;
@@ -206,11 +228,11 @@ void adcLogging() {
 		P2DIR &= ~(LEDCath | LEDAnod); // LEDs off
 
 	  long sum = 0;
-	  for (byte j = ReportSecs * SampleHz; j--;) {
+	  for (byte j = SamplesPerReport; j--;) {
 	  	word sum16 = 0;
 	  	for (byte i = 16; i--;) {
 	  		sum16 += readADC();
-	  		delay_us(1000000 / 16 / SampleHz - (16 + 14) / 4.8 - 0);  // ~60 Hz sum16s; (REFO 0.4% fast)
+	  		delay_us(1000000 / 16 / Sample16Hz - (1024 + 14) / 4.8 - 0);  // ~60 Hz sum16s
 	  	}
 
 	  	P1OUT ^= BIT1; // JP6-4 30 Hz next to 31.25kHz ACLK / 32 on pin 3
@@ -223,11 +245,18 @@ void adcLogging() {
 	    sum += sum16;
 	  }
 
-	  payload.adcNow = sum / (ReportSecs * SampleHz);
+	  payload.adcNow = sum / SamplesPerReport;
 
 	  // TODO: send calibrated CPU temperature ***
 
-    if (transmit()) {
+	  // Internal refs typ. 30 ppm/°C
+	  // XC6206 typ +-100 ppm/°C
+	  //  so calibrate Vcc/2 with REF2_5V
+	  // send mV
+	  // shielded cable
+
+
+	  if (transmit()) {
   		payload.adcMin = 0xFFFF;
   		payload.adcMax = 0;
     } // else accumulate min/max over away trip
@@ -242,22 +271,18 @@ void adcLogging() {
 }
 
 
-// TODO: slower clock, lower Vcore, LPM1+ while ADC sampling using a timer, ..
-
-
 int main(void) {
 	away = SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
 
-	setCPUClockREFO(NomCPUHz);
-	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at SMCLK
+	UCSCTL4 = SELA__DCOCLKDIV | SELS__DCOCLKDIV | SELM__DCOCLKDIV; 	// 1.048576 MHz default clocks
 
-	if (!away)  // not WDT wake
-		for (byte level = 0; level < 16; ++level) {
-			setLEDlevel(level);
-			delay(20);
-		}
+	UCSCTL5 = DIVPA__32;  // ACLK / 32 out
+	P1SEL = BIT0;  // 1.05MHz / 32 = 32KHz on JP6-3
+	P1DIR |= BIT0;
+
+	TA0CTL = TASSEL__ACLK | MC__CONTINUOUS;  // count up at ACLK
 
   initRF24();
 
@@ -265,10 +290,19 @@ int main(void) {
   while ((P4IN & S2) && scanChannels() < 255);
   while (1);
 #endif
-
   setChannel(RFch);  // quietest
 
-  openWritingPipe(RFaddr);
+  switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial
+   // case 0x???: unit = 0; break;  // TODO: check
+    case 0x8EED: unit = 1; break;  // latest
+    default: unit = 0; break;
+  }
+
+#if 0
+  openWritingPipe(RFaddr[unit]);  // fix
+#else
+  openWritingPipe(RFaddr[0]);
+#endif
 
 #if 0
   testTx();

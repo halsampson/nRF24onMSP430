@@ -163,6 +163,7 @@ __interrupt void USCI_A3(void) {
   __bic_SR_register_on_exit(LPM3_bits);
 }
 
+
 void openWritingPipe(const void* address) {  // LSB first
   write_register(TX_ADDR, address, AddressWidth);
   write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
