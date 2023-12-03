@@ -83,7 +83,7 @@ void initRF24() {
   write_register(SETUP_AW, AddressWidth - 2);   // set address length to 5 bytes
   write_register(SETUP_RETR, 15 << 4 | 15); // (n * 250us + 1) interval between m retransmits
 
-  setPAlevel(3); // +PA needs decrease using S1
+  setPAlevel(3); // +PA version needs decrease using S1
 
 	for (int8 pipe = 5; pipe >= 0; --pipe)
     write_register(RX_ADDR_P0 + pipe, 0xc1 + pipe);  // unique addresses
@@ -148,13 +148,13 @@ byte scanChannels() { // call multiple times to accumulate channel usage spectru
 	static byte maxUseCount = 0;
 	for (byte channel = 0; channel < 128; ++channel) {
 		if (checkChannel(channel)) {
-			// increment with probability 1/count -> accumulates roughly ln(count) = integral(1/count)
-			if (channelUse[channel] && (byte)TA0R % channelUse[channel]) continue;
+			// increment with probability ~ 1/count to accumulate ~ sqrt(2 * N) in one byte
+			if (channelUse[channel] && (byte)TA0R % channelUse[channel]) continue; // better more random than TA0R timer
 			if (++channelUse[channel] > maxUseCount)
 				++maxUseCount;
 		}
 	}
-	return maxUseCount;
+	return maxUseCount; // to reach 255 with always active channel on average takes sum(1..255) = 32768 scans
 }
 
 #pragma vector=USCI_A3_VECTOR

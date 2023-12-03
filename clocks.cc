@@ -38,7 +38,7 @@ void stableDCO() {
   }
 }
 
-long actualCPUHz;
+long actualCPUHz = 1048576;  // default
 
 long setCPUClockREFO(long CPUHz) {
 	for (int level = 1; level <= 3; level++) // maximize Vcore for fast MCLK
@@ -97,13 +97,12 @@ void delay_us(word us) {  // TODO: assumes 1 MHz ACLK
 	us -= us / 32;
 	us -= us / 64;
 #endif
-	TA0CCR0 = us - 2; // overhead
+	TA0CCR0 = us - 30; // overhead cycles
 	TA0CCTL0 = CCIE;  // compare
 	TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR; // ACLK ~1 MHz
-	__bis_SR_register(LPM3_bits + GIE);  // sleep     TODO: Fix FLL lock lost after LPM1+ with FLL off
+	__bis_SR_register(LPM3_bits + GIE);  // sleep     TODO: Beware FLL lock lost after LPM1+ with FLL off
 	TA0CTL = TACLR; // stop
 }
-
 
 void delay(word ms) {
 	while (ms--)
