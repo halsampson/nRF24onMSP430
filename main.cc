@@ -224,7 +224,7 @@ byte unit;
 
 const byte NumUnits = 1 + 3;
 
-word rCal[NumUnits] = {47895, 47433, 47895, 47895,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5
+word rCal[NumUnits] = {47608, 47525, 47895, 47895,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
 
 void adcLogging() {
   const byte Sample16Hz = 60;
@@ -239,7 +239,8 @@ void adcLogging() {
   ADC12CTL1 = ADC12SHP | ADC12SSEL_0;  // ADC12OSC = MODOSC ~ 4.8 MHz
   ADC12IE = ADC12IE0;
 
-	payload.adcMin = 0xFFFF;
+  word adcMin = 0xFFFF;
+  word adcMax = 0;
 
 	while (1) {
 	  WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_4; // VLO 14kHz max / 2^15 > 2.3s, typ. 3.5s
@@ -247,7 +248,7 @@ void adcLogging() {
 
 	  // ADC setup to switch to read 12V
 	  ADC12CTL0 &= ~ADC12ENC;
-	  ADC12CTL0 = ADC12SHT0_7 | ADC12ON; // input impedance 38KΩ * 25pF * ln(12 + 1) + 800ns = 3.2us * 5.4 MHz = 18 clocks min ; 192 better 16 bit
+	  ADC12CTL0 = ADC12SHT0_12 | ADC12ON; // input impedance 38KΩ * 25pF * ln(12 + 1) + 800ns = 3.2us * 5.4 MHz = 18 clocks min ; 1024 better 16 bit
 	  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
 	  ADC12MCTL0 = ADC12EOS | ADC12SREF_0 | ADC12INCH_0 + ADC_CH; // An / AVcc
 
@@ -256,15 +257,15 @@ void adcLogging() {
 	  	word sum16 = 0;
 	  	for (byte i = 16; i--;) {
 	  		sum16 += readADC() + CAL_ADC_OFFSET;
-	  		delay_us(1000000 / 16 / Sample16Hz - (192 + 14) / 4.8 - 0);  // ~60 Hz sum16s
+	  		delay_us(1000000 / 16 / Sample16Hz - (1024 + 14) / 4.8 - 0);  // ~60 Hz sum16s
 	  	}
 
 	  	P1OUT ^= BIT1; // JP6-4 30 Hz next to 31.25kHz ACLK / 32 on pin 3
 
-	    if (sum16 < payload.adcMin)
-	    	payload.adcMin = sum16;
-	    else if (sum16 > payload.adcMax)
-	    	payload.adcMax = sum16;
+	    if (sum16 < adcMin)
+	    	adcMin = sum16;
+	    else if (sum16 > adcMax)
+	    	adcMax = sum16;
 
 	    sum += sum16;
 	  }
@@ -281,11 +282,14 @@ void adcLogging() {
 
 	  payload.adcNow = (payload.adcNow * (long)vCal) >> 17;
 
+	  payload.adcMin = (adcMin * (long)vCal) >> 17;
+	  payload.adcMax = (adcMax * (long)vCal) >> 17;
+
 	  // same for min/max
 
 	  if (transmit()) {
-  		payload.adcMin = 0xFFFF;
-  		payload.adcMax = 0;
+  		adcMin = 0xFFFF;
+  		adcMax = 0;
     } // else accumulate min/max over away trip
 
 	  checkSwitches();
