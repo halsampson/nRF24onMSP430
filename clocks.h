@@ -11,6 +11,8 @@ typedef unsigned long long uint64;
 const uint32 BaudRate = 2000000L;
 const uint32 NomCPUHz = 8 * BaudRate;
 
+const word REFOCLK_HZ = 32768;
+
 long setCPUClockREFO(long CPUHz);
 
 void delay_us(word us);

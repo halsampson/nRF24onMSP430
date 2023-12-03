@@ -157,11 +157,6 @@ byte scanChannels() { // call multiple times to accumulate channel usage spectru
 	return maxUseCount; // to reach 255 with always active channel on average takes sum(1..255) = 32768 scans
 }
 
-#pragma vector=USCI_A3_VECTOR
-__interrupt void USCI_A3(void) {
-	nRF24IRQ->IFG = 0;
-  __bic_SR_register_on_exit(LPM3_bits);
-}
 
 
 void openWritingPipe(const void* address) {  // LSB first
@@ -182,6 +177,13 @@ void openWritingPipe(const void* address) {  // LSB first
 
 	nRF24IRQ->IE = UCRXIE; // only when UCSWRST = 0!
 	nRF24IRQ->IFG = 0;
+}
+
+
+#pragma vector=USCI_A3_VECTOR
+__interrupt void USCI_A3(void) {
+	nRF24IRQ->IFG = 0;
+  __bic_SR_register_on_exit(LPM4_bits);
 }
 
 
@@ -207,7 +209,7 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 
 	// use watchdog IRQ for timeout (shouldn't happen)
 	if (WDTCTL & WDTHOLD) WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_5; // VLO 14kHz max / 2^13 > 585ms
-	__bis_SR_register(LPM3_bits + GIE);  // sleep until IRQ->RxD start bit wake
+	__bis_SR_register(LPM4_bits + GIE);  // sleep until IRQ->RxD start bit wake
 
 	nRF24port->Out &= ~CE;
 
