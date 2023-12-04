@@ -8,7 +8,7 @@
 
 #include <private.txt> // RFch, RFaddr
 
-// use shielded cable
+// best use shielded cable?
 
 typedef struct {
 	volatile word IN, Out, DIR, REN, DS, SEL[2];
@@ -77,7 +77,7 @@ void setLEDlevel(byte level) { // 0: bright green .. 15: bright red
 	P2DS = 0;
 	P2DIR = P2SEL = LEDCath | LEDAnod;
 
-	TA1CTL = TASSEL_2 | MC_2; // SMCLK Continuous
+	TA1CTL = TASSEL__SMCLK | MC__CONTINUOUS;
 	TA1CCTL1 = OUTMOD_3; // Cath / hi at CCR1
 	TA1CCTL2 = OUTMOD_7; // Anod \ lo at CCR2
 	TA1CCR0 = 0xFFFF;
@@ -200,7 +200,7 @@ bool away;
 bool transmit() {
 #if 1  // 0 for quick testing
 	static byte reconnectWait;
-  if (away && ++reconnectWait) // slow retries to 512 seconds when away
+  if (away && (++reconnectWait & 1)) // slower retries / blink when away
   	return false;
 #endif
 
@@ -218,12 +218,13 @@ bool transmit() {
 
 byte unit;
 
-#define ADC_PORT ((PortB*)(P6_BASE + 1))
-#define ADC_CH   unit                       // A0: JP10-4 blown on 2n board;  or  A1: JP10-6 next to Gnd, blown shorted on 1st proto board
-#define ADC_PIN  (1 << ADC_CH)
-
 const byte NumUnits = 1 + 3;
-word rCal[NumUnits] = {47608, 47578, 47895, 47895,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const word rCal[NumUnits] = {46885, 47578, 47895, 46885,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const byte adcCh[NumUnits] = {0, 1, 0, 0};
+
+#define ADC_PORT ((PortB*)(P6_BASE + 1))
+#define ADC_CH   adcCh[unit]       // A0: JP10-4 blown on 2nd board;  or  A1: JP10-6 next to Gnd, blown on 1st proto board
+#define ADC_PIN  (1 << ADC_CH)
 
 void adcLogging() {
 	const byte SamplesPerCycle = 16;
@@ -237,6 +238,8 @@ void adcLogging() {
   ADC12CTL0 &= ~ADC12ENC;
   REFCTL0 &= ~REFMSTR;  // use legacy control bits
   ADC12CTL1 = ADC12SHS_2 | ADC12SHP | ADC12SSEL_0 | ADC12CONSEQ_1;  // TB0.0  ADC12OSC = MODOSC ~ 4.8 MHz
+  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
+  ADC12CTL0 = ADC12SHT1_12 |ADC12SHT0_12 | ADC12ON; // input impedance 38KΩ * 25pF * ln(12 + 1) + 800ns = 3.2us * 5.4 MHz = 18 clocks min ; 1024 better 16 bit
 
   TB0CTL = TBSSEL__ACLK | MC__UP;
   TB0CCTL0 = OUTMOD_4; // toggle, so half frequency
@@ -256,9 +259,7 @@ void adcLogging() {
 
 	  // ADC setup to switch to read 12V
 	  ADC12CTL0 &= ~ADC12ENC;
-	  ADC12CTL0 = ADC12SHT1_12 |ADC12SHT0_12 | ADC12ON; // input impedance 38KΩ * 25pF * ln(12 + 1) + 800ns = 3.2us * 5.4 MHz = 18 clocks min ; 1024 better 16 bit
 	  ADC12CTL1 = ADC12SHP | ADC12SHS_2 | ADC12SSEL_0 | ADC12CONSEQ_1;  // TB0.0  ADC12OSC = MODOSC ~ 4.8 MHz
-	  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST; // 12 bit
 	  ADC12MCTL0 = ADC12SREF_0 | ADC12INCH_0 + ADC_CH; // An / AVcc
 	  ADC12IE = ADC12IE15;
 
@@ -286,11 +287,16 @@ void adcLogging() {
 	  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;
 
 	  payload.degreesC = dieTemp();
+	  ADC12CTL0 &= ~ADC12ENC;
+	  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST;
 
 	  // Internal refs typ.     30 ppm/°C
 	  //    vs. XC6206 typ. +/-100 ppm/°C
 	  //    so calibrate: Vcc / 2 / REF2.5V
 	  word vCal = (long)rCal[unit] * VccDiv5V() / 4096;
+
+	  ADC12CTL0 &= ~ADC12ENC;
+	  ADC12CTL0 = ADC12SHT1_12 |ADC12SHT0_12 | ADC12ON;
 
 	  payload.adcNow = (payload.adcNow * (long)vCal) >> 17; // send mV
 	  payload.adcMin = (adcMin * (long)vCal) >> 17;
@@ -304,8 +310,8 @@ void adcLogging() {
 	  checkSwitches();
 
 	  if (diagMode && payload.retries > 1) {
-	  	setLEDlevel(payload.retries);  // can be > 15
-	  	delay(50);  // still low power
+	  	setLEDlevel(payload.retries);  // can be > 15 --> LED color cycles
+	  	delay(50);
 	  }
 	}
 }
@@ -316,10 +322,10 @@ int main(void) {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
 
-	UCSCTL4 = SELA__REFOCLK | SELS__DCOCLKDIV | SELM__DCOCLKDIV; 	// 32KHz,  1.048576 MHz clocks
+	UCSCTL4 = SELA__REFOCLK | SELS__DCOCLKDIV | SELM__DCOCLKDIV; 	// ACLK 32KHz, SMCLK, MCLK 1.048576 MHz
 
 	UCSCTL5 = DIVPA__1;  // ACLK / N out
-	P1SEL = BIT0;  // 1.05MHz / 32 = 32KHz on JP6-3   (loses FLL lock in LPM3!)
+	P1SEL = BIT0;  // ACLK on JP6-3
 	P1DIR |= BIT0;
 
   initRF24();
@@ -331,9 +337,8 @@ int main(void) {
   setChannel(RFch);  // quietest
 
   switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial
-   // case 0x???: unit = 0; break;  // TODO: check
-    case 0x8EED: unit = 1; break;  // latest
-    default: unit = 0; break;
+    case 0x8EED: unit = 1; break;  // Two White LEDs
+    case 0xA170: unit = 3; break;  // Red + Bicolor LEDs
   }
 
 #if 0

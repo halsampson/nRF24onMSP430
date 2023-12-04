@@ -145,6 +145,7 @@ bool checkChannel(byte channel) {
 byte channelUse[128];
 
 byte scanChannels() { // call multiple times to accumulate channel usage spectrum
+	TA0CTL = TASSEL__SMCLK | MC__CONTINUOUS;
 	static byte maxUseCount = 0;
 	for (byte channel = 0; channel < 128; ++channel) {
 		if (checkChannel(channel)) {
