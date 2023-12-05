@@ -118,7 +118,7 @@ void checkSwitches() {
 
 }
 
-void testTx() { // retries to LEDs for signal propagation walk testing
+void testTx() { // quick retries to LEDs for signal propagation walk testing
 	for (byte level = 0; level < 16; ++level) {
 		setLEDlevel(level);
 		delay(20);
@@ -195,31 +195,22 @@ struct {
 } payload;
 // Note: packet overhead is 9 bytes
 
-bool away;
+byte retries;
 
 bool transmit() {
-#if 1  // 0 for quick testing
+	retries = read_register(OBSERVE_TX) & 0xF;
 	static byte reconnectWait;
-  if (away && (++reconnectWait & 1)) // slower retries / blink when away
+  if (retries == 15 && (++reconnectWait & 1)) // 2X slower retries / blink when likely away
   	return false;
-#endif
 
-  byte sendTries = 4;
-  while (sendTries--) {
-		payload.retries += read_register(OBSERVE_TX) & 0xF;
-		if (write(&payload, sizeof(payload))) {
-			away = false; // back reconnected OK
-			return true;  // WDT reset here if can't send
-		}
-  }
-  away = true;
-  return false;
+  payload.retries += retries;
+	return write(&payload, sizeof(payload));
 }
 
 byte unit;
 
 const byte NumUnits = 1 + 3;
-const word rCal[NumUnits] = {46885, 47578, 47895, 46885,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const word rCal[NumUnits] = {47895, 47578, 47895, 46843,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
 const byte adcCh[NumUnits] = {0, 1, 0, 0};
 
 #define ADC_PORT ((PortB*)(P6_BASE + 1))
@@ -265,13 +256,11 @@ void adcLogging() {
 
 	  long sum = 0;
 	  for (byte j = SamplesPerReport; j--;) {
-	    readADC();
+	    readADC(); // 16 samples
 	  	word sum16 = 0;
 	  	volatile word* adcmem = &ADC12MEM0;
 	  	for (byte i = SamplesPerCycle; i--;)
 	  		sum16 += *adcmem++ + CAL_ADC_OFFSET;
-
-	  	P1OUT ^= BIT2; // JP6-5 ~30 Hz next to 31.25kHz ACLK / 32 on pin 3; Gnd pin 1
 
 	    if (sum16 < adcMin)
 	    	adcMin = sum16;
@@ -279,11 +268,13 @@ void adcLogging() {
 	    	adcMax = sum16;
 
 	    sum += sum16;
+
+	  	P1OUT ^= BIT2; // JP6-5 ~30 Hz next to 31.25kHz ACLK / 32 on pin 3; Gnd pin 1
 	  }
 
 	  payload.adcNow = sum / SamplesPerReport;
 
-	  ADC12IE = ADC12IE0; // for two single samples
+	  ADC12IE = ADC12IE0; // for next two single samples
 	  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;
 
 	  payload.degreesC = dieTemp();
@@ -308,17 +299,16 @@ void adcLogging() {
     } // else accumulate min/max over away trip
 
 	  checkSwitches();
-
-	  if (diagMode && payload.retries > 1) {
-	  	setLEDlevel(payload.retries);  // can be > 15 --> LED color cycles
-	  	delay(50);
+	  if (diagMode && retries) {
+	  	setLEDlevel(payload.retries);
+	  	delay(50); // brief flash
 	  }
 	}
 }
 
 
 int main(void) {
-	away = SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
+	// SYSRSTIV == SYSRSTIV_WDTTO;  // boot caused by WDT
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	initPorts();
 
@@ -338,7 +328,7 @@ int main(void) {
 
   switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial
     case 0x8EED: unit = 1; break;  // Two White LEDs
-    case 0xA170: unit = 3; break;  // Red + Bicolor LEDs
+    case 0xA170: unit = 3; break;  // Red + Bicolor LEDs, 2 PB switches
   }
 
 #if 0
