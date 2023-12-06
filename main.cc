@@ -210,7 +210,7 @@ bool transmit() {
 byte unit;
 
 const byte NumUnits = 1 + 3;
-const word rCal[NumUnits] = {47895, 47578, 47895, 46843,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const word rCal[NumUnits] = {47895, 47578, 48080, 46843,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
 const byte adcCh[NumUnits] = {0, 1, 0, 0};
 
 #define ADC_PORT ((PortB*)(P6_BASE + 1))
@@ -328,6 +328,7 @@ int main(void) {
 
   switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial
     case 0x8EED: unit = 1; break;  // Two White LEDs
+    case 0x1AB2: unit = 2; break;  // No USB
     case 0xA170: unit = 3; break;  // Red + Bicolor LEDs, 2 PB switches
   }
 
