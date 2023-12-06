@@ -185,6 +185,20 @@ word VccDiv5V() {
   return readADC() + CAL_ADC_OFFSET;
 }
 
+byte unit;
+
+void setUnit() {
+  switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial #
+    case 0x8EED: unit = 1; break;  // USB, Two White LEDs
+    case 0x1AB2: unit = 2; break;  // No USB, short cord
+    case 0xA170: unit = 3; break;  // USB, Red + Bicolor LEDs, 2 PB switches
+  }
+}
+
+const byte NumUnits = 1 + 3;
+const word rCal[NumUnits] = {47895, 47578, 48144, 46843};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const byte adcCh[NumUnits] = {0, 1, 0, 0};
+
 struct {
 	word adcNow;  // mV
 	word adcMin;
@@ -194,6 +208,7 @@ struct {
 	short degreesC; // in hundredths
 } payload;
 // Note: packet overhead is 9 bytes
+
 
 byte retries;
 
@@ -207,11 +222,6 @@ bool transmit() {
 	return write(&payload, sizeof(payload));
 }
 
-byte unit;
-
-const byte NumUnits = 1 + 3;
-const word rCal[NumUnits] = {47895, 47578, 48080, 46843,};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
-const byte adcCh[NumUnits] = {0, 1, 0, 0};
 
 #define ADC_PORT ((PortB*)(P6_BASE + 1))
 #define ADC_CH   adcCh[unit]       // A0: JP10-4 blown on 2nd board;  or  A1: JP10-6 next to Gnd, blown on 1st proto board
@@ -222,8 +232,7 @@ void adcLogging() {
   const byte Sample16Hz = 60;
   const byte SamplesPerReport = 128;// ~2 sec
 
-  payload.ID[0] = RFaddr[unit][0];
-  payload.ID[1] = RFaddr[unit][1];
+  payload.ID[0] = unit;
 
   ADC_PORT->SEL |= ADC_PIN; // A0
   ADC12CTL0 &= ~ADC12ENC;
@@ -277,17 +286,22 @@ void adcLogging() {
 	  ADC12IE = ADC12IE0; // for next two single samples
 	  ADC12CTL1 = ADC12SHP | ADC12SSEL_0;
 
-	  payload.degreesC = dieTemp();
+
+	  if (!payload.degreesC)
+	    payload.degreesC = dieTemp();
+	  else payload.degreesC += (dieTemp() - payload.degreesC) / 32; // or longer average
+
 	  ADC12CTL0 &= ~ADC12ENC;
 	  ADC12CTL2 = ADC12TCOFF | ADC12RES_2 | ADC12REFBURST;
 
 	  // Internal refs typ.     30 ppm/°C
 	  //    vs. XC6206 typ. +/-100 ppm/°C
 	  //    so calibrate: Vcc / 2 / REF2.5V
-	  word vCal = (long)rCal[unit] * VccDiv5V() / 4096;
-
+	  word vCalNow = (long)rCal[unit] * VccDiv5V() / 4096;
 	  ADC12CTL0 &= ~ADC12ENC;
 	  ADC12CTL0 = ADC12SHT1_12 |ADC12SHT0_12 | ADC12ON;
+	  static word vCal = vCalNow;
+	  vCal += (int)(vCalNow - vCal) / 32;
 
 	  payload.adcNow = (payload.adcNow * (long)vCal) >> 17; // send mV
 	  payload.adcMin = (adcMin * (long)vCal) >> 17;
@@ -318,6 +332,8 @@ int main(void) {
 	P1SEL = BIT0;  // ACLK on JP6-3
 	P1DIR |= BIT0;
 
+	setUnit();
+
   initRF24();
 
 #if 0  // used spectrum scan
@@ -326,14 +342,8 @@ int main(void) {
 #endif
   setChannel(RFch);  // quietest
 
-  switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial
-    case 0x8EED: unit = 1; break;  // Two White LEDs
-    case 0x1AB2: unit = 2; break;  // No USB
-    case 0xA170: unit = 3; break;  // Red + Bicolor LEDs, 2 PB switches
-  }
-
 #if 0
-  openWritingPipe(RFaddr[unit]);  // fix
+  openWritingPipe(RFaddr[unit]);  // fix rcvr
 #else
   openWritingPipe(RFaddr[0]);
 #endif
