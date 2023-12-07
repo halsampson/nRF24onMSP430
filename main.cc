@@ -156,6 +156,24 @@ word readADC() {
 	return ADC12MEM0;
 }
 
+byte unit;
+
+void setUnit() {
+  switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial #
+    case 0x8EED: unit = 1; break;  // USB, Two White LEDs
+    case 0x1AB2: unit = 2; break;  // No USB, short cord
+    case 0xA170: unit = 3; break;  // USB, Red + Bicolor LEDs, 2 PB switches
+  }
+}
+
+const byte NumUnits = 1 + 3;
+const int tempOffset[NumUnits] = {0, 0, -344, -44};  // hundredths if °C
+const word rCal[NumUnits] = {47895, 47607, 48086, 46856};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
+const byte adcCh[NumUnits] = {0, 1, 0, 0};
+// REF typ. 30 ppm/°C -- could compensate
+
+
+
 #define TAG_ADC12               0x1A14
 #define CAL_ADC_GAIN_FACTOR   (*((uint*)(TAG_ADC12 + 2)))     // ~32768
 #define CAL_ADC_OFFSET         (*((int*)(TAG_ADC12 + 4)))
@@ -173,7 +191,7 @@ int dieTemp() {
   ADC12CTL0 = ADC12SHT0_10 | ADC12REFON | ADC12ON;  // max(75, 30)us * 5.4Mhz = 405 ADC clocks < 512
   ADC12MCTL0 = ADC12EOS | ADC12SREF_1 | ADC12INCH_10; // Temp diode / REF1_5V
 
-  return ((int)readADC() - CAL_ADC_15T30) * (85 - 30) * 100L / (CAL_ADC_15T85 - CAL_ADC_15T30) + 30 * 100;  // in hundredths of degrees Celsius
+  return ((int)readADC() - CAL_ADC_15T30) * 100L * (85 - 30) / (CAL_ADC_15T85 - CAL_ADC_15T30) + 30 * 100 + tempOffset[unit];  // in hundredths of degrees Celsius
     // calibration error +/- 3°C, matched within a wafer
 }
 
@@ -185,19 +203,6 @@ word VccDiv5V() {
   return readADC() + CAL_ADC_OFFSET;
 }
 
-byte unit;
-
-void setUnit() {
-  switch (*(word*)0x1A02) {  // CRC of Device Descriptor Table ~ serial #
-    case 0x8EED: unit = 1; break;  // USB, Two White LEDs
-    case 0x1AB2: unit = 2; break;  // No USB, short cord
-    case 0xA170: unit = 3; break;  // USB, Red + Bicolor LEDs, 2 PB switches
-  }
-}
-
-const byte NumUnits = 1 + 3;
-const word rCal[NumUnits] = {47895, 47578, 48144, 46843};  // 2 * 5 * 1000 * (180 + 47.5) / 47.5, adjusted for Vref, resistors, ...
-const byte adcCh[NumUnits] = {0, 1, 0, 0};
 
 struct {
 	word adcNow;  // mV
@@ -297,15 +302,15 @@ void adcLogging() {
 	  // Internal refs typ.     30 ppm/°C
 	  //    vs. XC6206 typ. +/-100 ppm/°C
 	  //    so calibrate: Vcc / 2 / REF2.5V
-	  word vCalNow = (long)rCal[unit] * VccDiv5V() / 4096;
+	  unsigned long vCalNow = (unsigned long)rCal[unit] * VccDiv5V();
 	  ADC12CTL0 &= ~ADC12ENC;
 	  ADC12CTL0 = ADC12SHT1_12 |ADC12SHT0_12 | ADC12ON;
-	  static word vCal = vCalNow;
-	  vCal += (int)(vCalNow - vCal) / 32;
+	  static unsigned long vCal = vCalNow;
+	  vCal += (int)(vCalNow - vCal) / 64;
 
-	  payload.adcNow = (payload.adcNow * (long)vCal) >> 17; // send mV
-	  payload.adcMin = (adcMin * (long)vCal) >> 17;
-	  payload.adcMax = (adcMax * (long)vCal) >> 17;
+	  payload.adcNow = (payload.adcNow * (vCal >> 11)) >> 18; // send mV: 14 bits max
+	  payload.adcMin = (adcMin * (vCal >> 11)) >> 18;
+	  payload.adcMax = (adcMax * (vCal >> 11)) >> 18;
 
 	  if (transmit()) {
   		adcMin = 0xFFFF;
