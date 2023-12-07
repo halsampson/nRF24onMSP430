@@ -38,6 +38,8 @@ void closeReadingPipe(byte pipe);
 
 void startListening(void);
 void stopListening(void);
+void read(void* buf, int8 len = -1);  // defaults to dynamic width
+
 
 void openWritingPipe(const void* address);
 bool write(const void* buf, int8 len = -1);   // defaults to strlen

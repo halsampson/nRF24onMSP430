@@ -201,12 +201,13 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 	  if (--payloadLen <= 0) break;
   }
 
-	if (staticPayloadSize) while (payloadLen-- > 0)  // pad to PayloadSize if static
+	if (staticPayloadSize)
+		while (payloadLen-- > 0)  // pad to PayloadSize if static
 		xferSPI(0);
 
-	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
-
 	nRF24port->Out |= CSN | CE; // Tx active high pulse > 10 us to send payload; longer CE to enable +PA
+
+	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 
 	// use watchdog IRQ for timeout (shouldn't happen)
 	if (WDTCTL & WDTHOLD) WDTCTL = WDTPW | WDTSSEL_2 | WDTCNTCL | WDTIS_5; // VLO 14kHz max / 2^13 > 585ms
@@ -223,4 +224,19 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
   if (WDTCTL & 7 == WDTIS_5) WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
 	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
 	return OK;
+}
+
+
+void read(void* buf, int8 len /* = -1*/) {
+	if (len < 0)
+		len = read_register(R_RX_PL_WID); // dynamic
+
+	xferSPI(R_RX_PAYLOAD);
+
+	while (len--) {
+	  *(byte*)buf = xferSPI(0);
+	  buf = (void*)((byte*)buf + 1);
+  }
+
+	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits, IRQ
 }
