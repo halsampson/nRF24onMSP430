@@ -108,11 +108,7 @@ void closeReadingPipe(byte pipe) {
   write_register(EN_RXADDR, read_register(EN_RXADDR) & ~(1 << pipe));
 }
 
-void startListening(void) {
-  write_register(NRF_CONFIG, 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP | 1 << PRIM_RX);  // TODO: IRQ MASK
-  write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset
-  nRF24port->Out |= CE;
-}
+
 
 void stopListening(void){
   nRF24port->Out &= ~CE;
@@ -127,7 +123,7 @@ void stopListening(void){
 
 bool checkChannel(byte channel) {
 	setChannel(channel);
-	startListening();
+	startListening(0, 0);
 	delay_us(130 + 40); // wake + AGC settle
 
 	byte dwell = 0;
@@ -158,17 +154,52 @@ byte scanChannels() { // call multiple times to accumulate channel usage spectru
 	return maxUseCount; // to reach 255 with always active channel on average takes sum(1..255) = 32768 scans
 }
 
+byte* bufferStart;
+byte* bufferIn;
+byte* bufferOut;
+byte bufferLen;
+byte len;
 
+void* nextBuffer() {
+	if (bufferOut == bufferIn) return 0;  // no more packets
 
-void openWritingPipe(const void* address) {  // LSB first
-  write_register(TX_ADDR, address, AddressWidth);
-  write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
-  write_register(EN_RXADDR, read_register(EN_RXADDR) | 3);  // pipes 0 and 1 for TX and RX ACKs
+	void* nextFilled = bufferOut;
+	if ((bufferOut += len) >= bufferStart + bufferLen)
+		bufferOut = bufferStart;
+	return nextFilled;
+}
 
-	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
-	write_register(NRF_CONFIG, 1 << MASK_RX_DR | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
-  // IRQ pin low on DataSent or MAX_RT retries
+void read() {
+	if (!bufferStart) return;
 
+	len = read_register(R_RX_PL_WID); // dynamic payload size
+
+	xferSPI(R_RX_PAYLOAD);
+	byte* bufp = bufferIn;
+	byte remain = len;
+	while (remain--)
+	  *bufp++ = xferSPI(0);
+
+	if (bufp + len > bufferStart + bufferLen) // if not enough room in buffer for next payload
+		bufferIn = bufferStart; // reset to top of buffer
+	else bufferIn = bufp;
+
+	nRF24port->Out |= CSN;
+	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits, IRQ
+}
+
+#pragma vector=USCI_A3_VECTOR
+__interrupt void USCI_A3(void) {
+	if (get_status() & (1 << RX_DR)) {
+		do read();
+		while (!(read_register(FIFO_STATUS) & (1 << RX_EMPTY)));
+	}
+
+	nRF24IRQ->IFG = 0;
+  __bic_SR_register_on_exit(LPM4_bits);
+}
+
+void enableIRQ() {
 	nRF24IRQ->CTL1 |= UCSWRST;
 	nRF24IRQ->CTL0 = 0; // default
 	nRF24IRQ->CTL1 = UCSSEL_2 | UCBRKIE | UCSWRST; // SMCLK
@@ -181,10 +212,16 @@ void openWritingPipe(const void* address) {  // LSB first
 }
 
 
-#pragma vector=USCI_A3_VECTOR
-__interrupt void USCI_A3(void) {
-	nRF24IRQ->IFG = 0;
-  __bic_SR_register_on_exit(LPM4_bits);
+void openWritingPipe(const void* address) {  // LSB first
+  write_register(TX_ADDR, address, AddressWidth);
+  write_register(RX_ADDR_P0, address, AddressWidth);  // for receiving ACK packets
+  write_register(EN_RXADDR, read_register(EN_RXADDR) | 3);  // pipes 0 and 1 for TX and RX ACKs
+
+	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits
+	write_register(NRF_CONFIG, 1 << MASK_RX_DR | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP); // CRC16, Power, Tx mode
+  // IRQ pin low on DataSent or MAX_RT retries
+
+  enableIRQ();
 }
 
 
@@ -227,16 +264,13 @@ bool write(const void* buf, int8 len /* = -1*/) {  // defaults to null-terminate
 }
 
 
-void read(void* buf, int8 len /* = -1*/) {
-	if (len < 0)
-		len = read_register(R_RX_PL_WID); // dynamic
+void startListening(void* buffer, byte bufLen) {
+  bufferIn = bufferOut = bufferStart = (byte*)buffer;
+  bufferLen = bufLen;
 
-	xferSPI(R_RX_PAYLOAD);
+  write_register(NRF_CONFIG, 1 << MASK_TX_DS | 1 << EN_CRC | 1 << CRCO | 1 << PWR_UP | 1 << PRIM_RX);
+  write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset
+  nRF24port->Out |= CE;
 
-	while (len--) {
-	  *(byte*)buf = xferSPI(0);
-	  buf = (void*)((byte*)buf + 1);
-  }
-
-	write_register(NRF_STATUS, 1 << RX_DR | 1 << TX_DS | 1 << MAX_RT); // reset status bits, IRQ
+  enableIRQ();
 }

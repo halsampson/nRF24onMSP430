@@ -36,10 +36,9 @@ byte getPAlevel();
 void openReadingPipe(byte pipe, const void* address);
 void closeReadingPipe(byte pipe);
 
-void startListening(void);
+void startListening(void* buffer, byte bufferLen);
+void* nextBuffer();  // null if no more packets
 void stopListening(void);
-void read(void* buf, int8 len = -1);  // defaults to dynamic width
-
 
 void openWritingPipe(const void* address);
 bool write(const void* buf, int8 len = -1);   // defaults to strlen

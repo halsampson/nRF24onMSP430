@@ -24,13 +24,12 @@ void initPorts() { // all inputs with pullups
 	}
 }
 
-byte* hexStr(int i) {
-  static byte intStr[5+2];
-  byte* p = intStr + sizeof(intStr) - 1; // at end
-  *p = 0;
-  *--p = ' ';
+char* hexStr(word i) {
+  static byte intStr[4+2];
+  byte* p = intStr + sizeof(intStr) - 2; // at ' '
+  *p = ' ';
   do {
-    unsigned int n = i & 0xF;
+    byte n = i & 0xF;
     *--p = n <= 9 ? n + '0' : n + 'A' - 10;
   } while (i >>= 4);
   return p;
@@ -209,7 +208,7 @@ struct {
 	word adcMin;
 	word adcMax;
 	word retries; // total
-	char ID[2];
+	char ID[2];     // better at start of packet
 	short degreesC; // in hundredths
 } payload;
 // Note: packet overhead is 9 bytes
